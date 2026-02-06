@@ -430,12 +430,33 @@ cd ~/openclaw && nohup node openclaw.mjs gateway > /tmp/openclaw.log 2>&1 &
 }
 ```
 
-- `passiveObserve: true` - 启用旁听模式
-- `requireMention: true` - 推荐保持 true，配合旁听使用
+**⚠️ 重要：两个配置必须配合使用！**
 
-**两者配合的逻辑：**
-- 被 @ 的消息 → 正常响应（必须回复）
-- 未被 @ 的消息 → 标记为旁听，agent 可选择是否回复
+| requireMention | passiveObserve | 效果 |
+|----------------|----------------|------|
+| `true` | `true` | ✅ 推荐：被@正常响应，未@作为旁听 |
+| `false` | `true` | ❌ 无效：所有消息都当作正常消息，旁听不生效 |
+| `true` | `false` | 只响应@消息，未@直接忽略 |
+| `false` | `false` | 响应所有消息 |
+
+**向用户确认（Agent 执行第八步配置时）：**
+
+先检查用户现有配置：
+```bash
+grep -A 5 '"feishu"' ~/.openclaw/openclaw.json | grep requireMention
+```
+
+如果用户 `requireMention` 是 `false`，向用户说明：
+
+> 检测到你的 `requireMention` 设置为 `false`。
+>
+> 如果要启用旁听模式，需要改为 `true`，这样：
+> - 被 @ 的消息 → 必须回复
+> - 未被 @ 的消息 → 作为旁听，你可以选择回复或忽略
+>
+> 如果保持 `false`，旁听模式不会生效（所有消息都会被当作需要回复的消息）。
+>
+> 要改成 `true` 吗？
 
 ---
 
