@@ -1,6 +1,28 @@
-# OpenClaw 飞书插件安装指南
+# Better Feishu for OpenClaw
 
-本文档供 OpenClaw agent 阅读，用于引导安装飞书渠道插件。
+增强版飞书/Lark 渠道插件，提供更好的消息格式和完整的飞书 API 支持。
+
+## 功能特性
+
+### 消息格式优化
+- **≤2000 字消息**：使用 `tag:md` 富文本格式，原生支持代码块、表格等 Markdown 语法
+- **>2000 字消息**：自动转为卡片格式，避免消息过长被截断
+- **话题回复**：支持在话题内回复，保持讨论上下文
+
+### 飞书 API 集成
+- **表情回应**：对消息添加/移除表情（THUMBSUP、SMILE 等 50+ 表情）
+- **消息操作**：置顶、撤回、编辑消息
+- **群聊管理**：查询群成员、群信息
+- **文档操作**：创建、读取、追加文档内容，管理文档权限
+- **表格操作**：创建、读取、写入电子表格
+- **云空间**：搜索文件、上传文件、创建文件夹
+- **附件自动下载**：用户发送的图片/文件自动下载到本地
+
+---
+
+# 安装指南
+
+本文档供 OpenClaw agent 阅读，用于引导用户完成安装配置。
 
 ---
 
@@ -44,7 +66,52 @@ cp skills/feishu/SKILL.md ~/.openclaw/extensions/feishu/skills/feishu/
 
 ---
 
-## 第二步：获取飞书应用凭证（需要用户协作）
+## 第三步：确认 SKILL.md 内容（需要用户确认）
+
+SKILL.md 文件定义了 agent 可以使用的飞书工具和调用方式。安装后会注入到 agent 的知识库中。
+
+**向用户说明：**
+
+> 即将安装的飞书插件包含以下工具能力，请确认是否需要：
+>
+> **消息操作：**
+> - `react` - 对消息添加表情回应
+> - `listMessages` - 列出群聊消息
+> - `pinMessage` / `unpinMessage` - 置顶/取消置顶
+> - `recallMessage` - 撤回消息
+> - `updateMessage` - 编辑消息
+> - `sendAttachment` - 发送文件/图片
+> - `replyInThread` - 话题回复
+>
+> **群聊操作：**
+> - `getChatMembers` - 获取群成员
+> - `getChatInfo` - 获取群信息
+>
+> **文档操作：**
+> - `createDocument` - 创建文档
+> - `readDocument` - 读取文档
+> - `appendDocument` - 追加内容
+> - `manageDocPermission` - 管理文档权限
+>
+> **表格操作：**
+> - `createSpreadsheet` - 创建表格
+> - `readSpreadsheet` - 读取表格
+> - `writeSpreadsheet` - 写入表格
+>
+> **云空间：**
+> - `searchDrive` - 搜索文件
+> - `uploadFile` - 上传文件
+>
+> 完整文档见 `skills/feishu/SKILL.md`。确认安装吗？
+
+**如果用户想查看完整内容，读取并展示：**
+```bash
+cat skills/feishu/SKILL.md
+```
+
+---
+
+## 第四步：获取飞书应用凭证（需要用户协作）
 
 **向用户说明：**
 
@@ -61,7 +128,7 @@ cp skills/feishu/SKILL.md ~/.openclaw/extensions/feishu/skills/feishu/
 
 ---
 
-## 第三步：配置应用权限（需要用户协作）
+## 第五步：配置应用权限（需要用户协作）
 
 **向用户说明：**
 
@@ -175,7 +242,7 @@ cp skills/feishu/SKILL.md ~/.openclaw/extensions/feishu/skills/feishu/
 
 ---
 
-## 第四步：启用机器人能力（需要用户协作）
+## 第六步：启用机器人能力（需要用户协作）
 
 **向用户说明：**
 
@@ -192,7 +259,7 @@ cp skills/feishu/SKILL.md ~/.openclaw/extensions/feishu/skills/feishu/
 
 ---
 
-## 第五步：发布应用（需要用户协作）
+## 第七步：发布应用（需要用户协作）
 
 **向用户说明：**
 
@@ -205,7 +272,7 @@ cp skills/feishu/SKILL.md ~/.openclaw/extensions/feishu/skills/feishu/
 
 ---
 
-## 第六步：写入 OpenClaw 配置（Agent 直接执行）
+## 第八步：写入 OpenClaw 配置（Agent 直接执行）
 
 读取现有配置：
 ```bash
@@ -243,7 +310,7 @@ cat ~/.openclaw/openclaw.json
 
 ---
 
-## 第七步：重启 Gateway（Agent 直接执行）
+## 第九步：重启 Gateway（Agent 直接执行）
 
 ```bash
 # 停止现有进程
@@ -263,7 +330,7 @@ pgrep -f "openclaw-gateway" && echo "Gateway 已启动"
 
 ---
 
-## 第八步：验证安装（需要用户协作）
+## 第十步：验证安装（需要用户协作）
 
 **向用户说明：**
 
