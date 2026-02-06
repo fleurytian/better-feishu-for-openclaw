@@ -439,24 +439,25 @@ cd ~/openclaw && nohup node openclaw.mjs gateway > /tmp/openclaw.log 2>&1 &
 | `true` | `false` | 只响应@消息，未@直接忽略 |
 | `false` | `false` | 响应所有消息 |
 
-**向用户确认（Agent 执行第八步配置时）：**
+**Agent 执行第八步配置时，自动检查并修复：**
 
-先检查用户现有配置：
 ```bash
-grep -A 5 '"feishu"' ~/.openclaw/openclaw.json | grep requireMention
+# 检查现有 requireMention 值
+grep -o '"requireMention"[[:space:]]*:[[:space:]]*[a-z]*' ~/.openclaw/openclaw.json
 ```
 
-如果用户 `requireMention` 是 `false`，向用户说明：
+如果是 `false` 且用户要启用旁听，**直接帮用户改**：
 
-> 检测到你的 `requireMention` 设置为 `false`。
->
-> 如果要启用旁听模式，需要改为 `true`，这样：
-> - 被 @ 的消息 → 必须回复
-> - 未被 @ 的消息 → 作为旁听，你可以选择回复或忽略
->
-> 如果保持 `false`，旁听模式不会生效（所有消息都会被当作需要回复的消息）。
->
-> 要改成 `true` 吗？
+```bash
+# 自动将 requireMention 改为 true
+sed -i '' 's/"requireMention"[[:space:]]*:[[:space:]]*false/"requireMention": true/' ~/.openclaw/openclaw.json
+```
+
+改完后告诉用户：
+
+> 已将 `requireMention` 从 `false` 改为 `true`，旁听模式现在可以正常工作了：
+> - 被 @ → 必须回复
+> - 未被 @ → 旁听，可选择回复或输出 no_reply
 
 ---
 
