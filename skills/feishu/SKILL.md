@@ -131,20 +131,37 @@ message(path='{"action": "react", "messageId": "om_xxx", ...}')
 
 ## 文档
 
-```json
-// 创建
-{ "action": "createDocument", "title": "标题", "content": "# Markdown 内容" }
+**⚠️ 重要：创建文档后必须开权限，否则用户打不开！**
 
-// 读取
+**完整工作流（创建 → 写入 → 开权限 → 发链接）：**
+
+```json
+// 第1步：创建文档（返回 documentId）
+{ "action": "createDocument", "title": "标题" }
+// 返回: { "documentId": "doxcnXXX", "url": "https://xxx.feishu.cn/docx/doxcnXXX" }
+
+// 第2步：写入内容
+{ "action": "appendDocument", "documentId": "doxcnXXX", "content": "# 内容\n正文..." }
+
+// 第3步：给用户开权限（用消息中的 sender 作为 memberId）
+{ "action": "manageDocPermission", "docToken": "doxcnXXX", "action": "add", "memberId": "ou_xxx", "perm": "view" }
+// perm 可选: "view"（只读）, "edit"（可编辑）
+
+// 第4步：把链接发给用户
+// 直接发送 url: https://xxx.feishu.cn/docx/doxcnXXX
+```
+
+**单独的 action：**
+
+```json
+// 读取文档
 { "action": "readDocument", "documentId": "doxcnXXX" }
 
-// 追加内容
-{ "action": "appendDocument", "documentId": "doxcnXXX", "content": "追加的文字" }
-
-// 权限管理
+// 查看当前权限
 { "action": "manageDocPermission", "docToken": "doxcnXXX", "action": "list" }
-{ "action": "manageDocPermission", "docToken": "doxcnXXX", "action": "add", "memberId": "ou_xxx", "perm": "edit" }
 ```
+
+**常见错误：** 创建文档后直接发链接给用户，用户点开提示「无权限」→ 忘了第3步开权限！
 
 ## 电子表格
 
