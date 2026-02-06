@@ -1,0 +1,84 @@
+{
+  "id": "feishu",
+  "name": "Feishu",
+  "description": "飞书/Lark 消息渠道插件",
+  "version": "0.1.0",
+  "channels": [
+    "feishu"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      },
+      "appId": {
+        "type": "string"
+      },
+      "appSecret": {
+        "type": "string"
+      },
+      "connectionMode": {
+        "type": "string",
+        "enum": [
+          "websocket"
+        ]
+      },
+      "dmPolicy": {
+        "type": "string",
+        "enum": [
+          "open",
+          "pairing",
+          "allowlist"
+        ]
+      },
+      "groupPolicy": {
+        "type": "string",
+        "enum": [
+          "open",
+          "allowlist",
+          "disabled"
+        ]
+      },
+      "requireMention": {
+        "type": "boolean"
+      },
+      "allowFrom": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "groupAllowFrom": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "sendMarkdownAsCard": {
+        "type": "boolean"
+      },
+      "historyLimit": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "textChunkLimit": {
+        "type": "integer",
+        "minimum": 1
+      }
+    }
+  },
+  "uiHints": {
+    "appId": {
+      "label": "App ID"
+    },
+    "appSecret": {
+      "label": "App Secret",
+      "sensitive": true
+    }
+  },
+  "skills": [
+    "./skills/feishu"
+  ]
+}
