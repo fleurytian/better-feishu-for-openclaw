@@ -89,7 +89,6 @@
       "space:document.event:read",
       "space:document:create",
       "space:document:shortcut",
-      "space:folder:create"
     ],
     "user": [
       "docx:document:create"

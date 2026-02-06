@@ -79,10 +79,10 @@ message(path='{"action": "react", "messageId": "om_xxx", ...}')
 // 列消息
 { "action": "listMessages", "chatId": "oc_xxx", "pageSize": 20 }
 
-// 置顶
+// Pin
 { "action": "pinMessage", "messageId": "om_xxx" }
 
-// 取消置顶
+// 取消Pin
 { "action": "unpinMessage", "messageId": "om_xxx" }
 
 // 撤回
