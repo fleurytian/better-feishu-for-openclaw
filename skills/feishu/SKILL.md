@@ -42,6 +42,7 @@ message(path='{"action": "react", "messageId": "om_xxx", ...}')
 2. **飞书文档/表格**（推荐结构化内容）：
    - 用 `createDocument` / `createSpreadsheet` 创建
    - **必须**用 `appendDocument` / `writeSpreadsheet` 写入内容
+   - **注意**：每次写入有字数限制（约 5000 字），长内容要分批 append
    - **必须**用 `manageDocPermission` 给用户开权限
    - 再把文档链接发给用户
 
@@ -133,15 +134,17 @@ message(path='{"action": "react", "messageId": "om_xxx", ...}')
 
 **⚠️ 重要：创建文档后必须开权限，否则用户打不开！**
 
-**完整工作流（创建 → 写入 → 开权限 → 发链接）：**
+**完整工作流（创建 → 分批写入 → 开权限 → 发链接）：**
 
 ```json
 // 第1步：创建文档（返回 documentId）
 { "action": "createDocument", "title": "标题" }
 // 返回: { "documentId": "doxcnXXX", "url": "https://xxx.feishu.cn/docx/doxcnXXX" }
 
-// 第2步：写入内容
-{ "action": "appendDocument", "documentId": "doxcnXXX", "content": "# 内容\n正文..." }
+// 第2步：分批写入内容（每次 appendDocument 有字数限制，约 5000 字）
+{ "action": "appendDocument", "documentId": "doxcnXXX", "content": "# 第一部分\n内容..." }
+{ "action": "appendDocument", "documentId": "doxcnXXX", "content": "# 第二部分\n更多内容..." }
+// 长文档必须分多次 append，每次控制在 5000 字以内
 
 // 第3步：给用户开权限（用消息中的 sender 作为 memberId）
 { "action": "manageDocPermission", "docToken": "doxcnXXX", "action": "add", "memberId": "ou_xxx", "perm": "view" }
