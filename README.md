@@ -424,14 +424,18 @@ cd ~/openclaw && nohup node openclaw.mjs gateway > /tmp/openclaw.log 2>&1 &
   "channels": {
     "feishu": {
       "passiveObserve": true,
-      "requireMention": false
+      "requireMention": true
     }
   }
 }
 ```
 
 - `passiveObserve: true` - 启用旁听模式
-- `requireMention: false` - 不强制 @ 才响应（配合旁听使用）
+- `requireMention: true` - 推荐保持 true，配合旁听使用
+
+**两者配合的逻辑：**
+- 被 @ 的消息 → 正常响应（必须回复）
+- 未被 @ 的消息 → 标记为旁听，agent 可选择是否回复
 
 ---
 
@@ -441,3 +445,9 @@ cd ~/openclaw && nohup node openclaw.mjs gateway > /tmp/openclaw.log 2>&1 &
 - `openclaw.plugin.json` - 插件元数据
 - `feishu-scopes.json` - 飞书权限列表（用户可导入）
 - `skills/feishu/SKILL.md` - 飞书工具使用文档（安装后 agent 可参考）
+- `templates/` - workspace 配置模板：
+  - `SOUL.md` - 行为准则模板（飞书表情、旁听规则）
+  - `AGENTS.md` - 工作方法模板（任务管理、文档工作流）
+  - `TOOLS.md` - 工具备忘模板（飞书 action 速查表）
+
+**模板使用方式：** 将 `templates/` 中的内容合并到用户的 `~/.openclaw/workspace/` 对应文件中。
