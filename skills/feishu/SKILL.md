@@ -74,6 +74,32 @@ message(path='{"action": "react", "messageId": "om_xxx", ...}')
 | 搞定 | DONE |
 | 不同意 | No, CrossMark, MinusOne, POOP, ClownFace |
 
+## @ 提及用户
+
+在消息文本中 @ 用户，使用以下格式：
+
+```
+<at user_id="ou_xxx">用户名</at>
+```
+
+**示例：**
+```json
+{
+  "action": "send",
+  "to": "chat:oc_xxx",
+  "text": "<at user_id=\"ou_abc123\">张三</at> 请查看这个文档"
+}
+```
+
+**获取 user_id：**
+- 从收到的消息中，`sender` 字段就是发送者的 `ou_xxx`
+- 用 `getChatMembers` 可以获取群成员列表及其 user_id
+
+**注意：**
+- `user_id` 格式为 `ou_xxx`（open_id）
+- 用户名可以是任意文字，但建议用真实姓名
+- @ 多人时，连续写多个 `<at>` 标签即可
+
 ## 消息操作
 
 ```json
