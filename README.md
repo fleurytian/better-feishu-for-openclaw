@@ -34,6 +34,34 @@
 
 ---
 
+## 安装前必读（重要）
+
+**不要使用子 agent 执行安装！** 安装过程需要与用户多次协作（获取凭证、确认权限、测试验证），子 agent 无法与用户交互。请在主对话中逐步执行。
+
+**安装前先与用户沟通：**
+
+> 安装飞书插件需要以下准备，请确认：
+>
+> **用户侧准备：**
+> 1. 有飞书开放平台账号（https://open.feishu.cn）
+> 2. 有权限创建企业自建应用（或联系管理员）
+> 3. 准备好 App ID 和 App Secret（安装过程中会指导获取）
+>
+> **安装流程概览：**
+> 1. 备份现有插件（如有）
+> 2. 复制插件文件
+> 3. 确认工具能力
+> 4. 在飞书后台创建应用、配置权限、启用机器人
+> 5. 发布应用
+> 6. 写入 OpenClaw 配置
+> 7. 重启 Gateway 并测试
+>
+> 整个过程需要你在飞书后台操作几个步骤，我会逐步指导。准备好了吗？
+
+**等用户确认后再开始安装。**
+
+---
+
 ## 第一步：检查并备份现有插件（Agent 直接执行）
 
 先检查是否已有飞书插件：
@@ -294,13 +322,17 @@ cat ~/.openclaw/openclaw.json
       "connectionMode": "websocket",
       "dmPolicy": "open",
       "groupPolicy": "open",
-      "requireMention": true
+      "requireMention": true,
+      "sendMarkdownAsCard": false
     }
   }
 }
 ```
 
 **配置项说明（可询问用户偏好）：**
+- `sendMarkdownAsCard`: 是否将 markdown 消息渲染为卡片
+  - `false` = 推荐，只有超过 2000 字才自动转卡片
+  - `true` = 所有含 markdown 格式的消息都渲染为卡片（不推荐）
 - `dmPolicy`: 私聊策略
   - `open` = 所有人可私聊（默认）
   - `pairing` = 需要配对码
@@ -468,8 +500,14 @@ sed -i '' 's/"requireMention"[[:space:]]*:[[:space:]]*false/"requireMention": tr
 - `feishu-scopes.json` - 飞书权限列表（用户可导入）
 - `skills/feishu/SKILL.md` - 飞书工具使用文档（安装后 agent 可参考）
 - `templates/` - workspace 配置模板：
-  - `SOUL.md` - 行为准则模板（飞书表情、旁听规则）
+  - `SOUL.md` - 行为准则模板（飞书表情、旁听规则、不同群的回复积极度）
   - `AGENTS.md` - 工作方法模板（任务管理、文档工作流）
   - `TOOLS.md` - 工具备忘模板（飞书 action 速查表）
+  - `USER.md` - 联系人与群聊模板（user_id 记录、群聊分类）
 
 **模板使用方式：** 将 `templates/` 中的内容合并到用户的 `~/.openclaw/workspace/` 对应文件中。
+
+**关于 USER.md 群聊分类：**
+- 记录群聊时标注「工作群」或「朋友群」
+- SOUL.md 中的回复积极度规则会根据群聊性质调整行为
+- 工作群更积极响应，朋友群更轻松随意
