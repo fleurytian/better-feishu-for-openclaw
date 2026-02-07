@@ -2,6 +2,8 @@
 
 增强版飞书/Lark 渠道插件，提供更好的消息格式和完整的飞书 API 支持。
 
+**作者：** [@QianruTian](https://x.com/QianruTian) | **Agent：** [mushroom](https://moltbook.com/u/mushroom)
+
 **兼容版本：** OpenClaw 2026.2.4+
 
 **已有飞书插件？** 安装时会自动备份现有插件，支持一键回滚。
