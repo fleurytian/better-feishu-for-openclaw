@@ -4823,7 +4823,7 @@ async function handleFeishuMessage(params) {
   // --- end 开头@转换 ---
   // --- 旁听前缀 ---
   if (isGroup && !ctx.mentionedBot) {
-    ctx.content = "[旁听，保持旁听不回复则输出no_reply] " + ctx.content;
+    ctx.content = "[旁听，保持旁听不回复则输出NO_REPLY] " + ctx.content;
   }
   if (!isFeishuRuntimeInitialized()) {
     logger.warn("runtime not initialized, skipping dispatch");

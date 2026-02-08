@@ -2,6 +2,24 @@
 
 > 将此内容合并到你的 `~/.openclaw/workspace/TOOLS.md`
 
+## 飞书文档和表格读取（重要）
+
+**收到飞书文档/表格链接时，必须使用飞书扩展读取，不要用 browser 或 web_fetch！**
+
+飞书文档和表格需要鉴权，browser/web_fetch 无法正确读取内容。使用 `message` 工具的以下 action：
+
+```
+# 读取飞书文档（从链接中提取 documentId，格式如 doxcnXXX）
+message(action="readDocument", documentId="doxcnXXX")
+
+# 读取飞书表格（从链接中提取 spreadsheetToken，格式如 shtcnXXX）
+message(action="readSpreadsheet", spreadsheetToken="shtcnXXX", sheetId="Sheet1", range="A1:Z100")
+```
+
+**如何从飞书链接提取 ID：**
+- 文档链接 `https://xxx.feishu.cn/docx/doxcnABCDEF` → documentId = `doxcnABCDEF`
+- 表格链接 `https://xxx.feishu.cn/sheets/shtcnABCDEF` → spreadsheetToken = `shtcnABCDEF`
+
 ## 飞书消息工具 (message)
 
 `message` 工具是飞书操作的核心，通过 `action` 参数决定行为。
