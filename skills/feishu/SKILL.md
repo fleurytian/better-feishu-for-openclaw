@@ -160,6 +160,14 @@ message(path='{"action": "react", "messageId": "om_xxx", ...}')
 
 ## 文档
 
+**⚠️ 从飞书链接提取 token 的方法：**
+- 文档：`https://xxx.feishu.cn/docx/ABC123def` → documentId = `ABC123def`
+- 表格：`https://xxx.feishu.cn/sheets/ABC123def` → spreadsheetToken = `ABC123def`
+- 表格带 sheet：`https://xxx.feishu.cn/sheets/ABC123def?sheet=0ab1c2` → spreadsheetToken = `ABC123def`, sheetId = `0ab1c2`
+- 知识库：`https://xxx.feishu.cn/wiki/ABC123def` → documentId = `ABC123def`（用 readDocument）
+- **token 不一定以 `doxcn`/`shtcn` 开头**，直接从 URL 提取即可
+- **表格链接没有 `?sheet=` 参数时，sheetId 可以省略或传 `"Sheet1"`**
+
 **⚠️ 重要：创建文档后必须开权限，否则用户打不开！**
 
 **完整工作流（创建 → 分批写入 → 开权限 → 发链接）：**

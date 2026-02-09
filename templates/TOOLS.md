@@ -9,16 +9,20 @@
 飞书文档和表格需要鉴权，browser/web_fetch 无法正确读取内容。使用 `message` 工具的以下 action：
 
 ```
-# 读取飞书文档（从链接中提取 documentId，格式如 doxcnXXX）
-message(action="readDocument", documentId="doxcnXXX")
+# 读取飞书文档
+message(action="readDocument", documentId="<token>")
 
-# 读取飞书表格（从链接中提取 spreadsheetToken，格式如 shtcnXXX）
-message(action="readSpreadsheet", spreadsheetToken="shtcnXXX", sheetId="Sheet1", range="A1:Z100")
+# 读取飞书表格
+message(action="readSpreadsheet", spreadsheetToken="<token>", sheetId="Sheet1", range="A1:Z100")
 ```
 
-**如何从飞书链接提取 ID：**
-- 文档链接 `https://xxx.feishu.cn/docx/doxcnABCDEF` → documentId = `doxcnABCDEF`
-- 表格链接 `https://xxx.feishu.cn/sheets/shtcnABCDEF` → spreadsheetToken = `shtcnABCDEF`
+**如何从飞书链接提取 token（直接取 URL 路径和参数）：**
+- 文档：`https://xxx.feishu.cn/docx/ABC123def` → documentId = `ABC123def`
+- 表格：`https://xxx.feishu.cn/sheets/ABC123def` → spreadsheetToken = `ABC123def`
+- 表格带 sheet：`https://xxx.feishu.cn/sheets/ABC123def?sheet=0ab1c2` → spreadsheetToken = `ABC123def`, sheetId = `0ab1c2`
+- 知识库：`https://xxx.feishu.cn/wiki/ABC123def` → documentId = `ABC123def`（用 readDocument）
+- **token 不一定以 doxcn/shtcn 开头，直接从 URL 提取即可**
+- **表格链接没有 `?sheet=` 参数时，sheetId 可以省略或传 `"Sheet1"`**
 
 ## 飞书消息工具 (message)
 
