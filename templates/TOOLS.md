@@ -24,6 +24,8 @@ message(action="readSpreadsheet", spreadsheetToken="<token>", sheetId="Sheet1", 
 - **token 不一定以 doxcn/shtcn 开头，直接从 URL 提取即可**
 - **表格链接没有 `?sheet=` 参数时，sheetId 可以省略或传 `"Sheet1"`**
 
+**飞书文档写入注意：appendDocument 每次最多约 5000 字，长内容必须分批多次 append，否则会报错。**
+
 ## 飞书消息工具 (message)
 
 `message` 工具是飞书操作的核心，通过 `action` 参数决定行为。
