@@ -4346,14 +4346,15 @@ var feishuOutbound = {
       return markdownPatterns.some((p) => p.test(text2));
     }
     
-    // 智能判断：如果开启卡片模式且文本包含 markdown，则发卡片；否则发普通文本
-    const shouldSendAsCard = feishuCfg.sendMarkdownAsCard && hasMarkdown(text);
-    const result = shouldSendAsCard ? await sendMarkdownCardFeishu({
+    // 与 deliver 逻辑一致：>2000字发卡片，否则发 post 富文本，永远不发纯 text
+    const CARD_THRESHOLD = 2000;
+    const useCard = text.length > CARD_THRESHOLD;
+    const result = useCard ? await sendMarkdownCardFeishu({
       cfg: feishuCfg,
       to: targetId,
       text,
       receiveIdType
-    }) : await sendMessageFeishu({
+    }) : await sendPostFeishu({
       cfg: feishuCfg,
       to: targetId,
       text,
