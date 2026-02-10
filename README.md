@@ -405,3 +405,32 @@ cd ~/openclaw && nohup node openclaw.mjs gateway > /tmp/openclaw.log 2>&1 &
 - 记录群聊时标注「工作群」或「朋友群」
 - SOUL.md 中的回复积极度规则会根据群聊性质调整行为
 - 工作群更积极响应，朋友群更轻松随意
+
+---
+
+## Known Issues
+
+### `Action readDocument does not accept a target` (OpenClaw 框架 bug)
+
+**症状：** 调用 `readDocument`、`appendDocument`、`createDocument` 等飞书自定义 action 时报错 `"Action xxx does not accept a target"`，即使 agent 没有传 `target` 参数。
+
+**根因：** OpenClaw 框架的 `actionRequiresTarget()` 函数对未注册在 `MESSAGE_ACTION_TARGET_MODE` 中的 action 返回 `true`（因为 `undefined !== "none"` = `true`），导致框架从当前会话 context 自动注入 `target`，然后 `applyTargetToParams()` 因 mode 为 `"none"` 而抛出错误。
+
+**影响版本：** OpenClaw 2026.2.4（截至目前未修复）
+
+**解决方案：** 应用以下两个运行时 patch（位于 [openclaw-feishu-pack](https://github.com/fleurytian/better-feishu-for-openclaw) 仓库）：
+
+```bash
+# patch-action-spec.py — 注册所有飞书自定义 action 到 MESSAGE_ACTION_TARGET_MODE
+# patch-channel-target.py — 安全网：未知 action 传了 target 时静默忽略而非报错
+
+for f in ~/openclaw/dist/extensionAPI.js ~/openclaw/dist/loader-*.js ~/openclaw/dist/reply-*.js; do
+  python3 patch-action-spec.py "$f"
+  python3 patch-channel-target.py "$f"
+done
+
+# 重启 gateway 生效
+systemctl --user restart openclaw-gateway
+```
+
+**注意：** 每次 OpenClaw 升级后需重新应用这些 patch。
