@@ -4167,12 +4167,17 @@ function markdownToPost(text) {
       paragraph.push({ tag: "text", text: remaining.slice(pos) });
     }
 
-    // 如果段落为空，添加空行
+    // 跳过空行 — 飞书 post 格式不允许空段落 (会导致 API 400 错误 230001)
     if (paragraph.length === 0) {
-      paragraph.push({ tag: "text", text: "" });
+      continue;
     }
 
     content.push(paragraph);
+  }
+
+  // 如果过滤后没有任何内容，保底加一个空格段落（避免空 content 导致 API 错误）
+  if (content.length === 0) {
+    content.push([{ tag: "text", text: " " }]);
   }
 
   return {
@@ -6072,6 +6077,8 @@ var feishuPlugin = {
       "- `action: \"unpinMessage\"`, `messageId` — 取消置顶",
       "- `action: \"recallMessage\"`, `messageId` — 撤回消息",
       "- `action: \"updateMessage\"`, `messageId`, `content` — 编辑消息",
+      "- `action: \"listThreadMessages\"`, `threadId`, `pageSize?` — 列出话题消息",
+      "- `action: \"replyInThread\"`, `messageId`, `content`, `msgType?` — 在话题内回复",
       "",
       "**群聊管理:**",
       "- `action: \"getChatInfo\"`, `chatId` — 获取群聊详情",
@@ -6103,6 +6110,8 @@ var feishuPlugin = {
       "- `action: \"uploadFile\"`, `path`, `parentToken`/`folderToken`, `fileName?`",
       "- `action: \"createFolder\"`, `name`, `parentToken?`",
       "- `action: \"sendAttachment\"`, `to`, `path` — 发送文件/图片到聊天",
+      "- `action: \"downloadImage\"`, `imageKey`, `savePath?`, `messageId?` — 下载飞书图片到本地",
+      "- `action: \"downloadFile\"`, `fileKey`, `savePath?`, `messageId?` — 下载飞书文件到本地",
       "",
       "**知识库:**",
       "- `action: \"listWikiSpaces\"` — 列出知识空间",
@@ -6407,6 +6416,124 @@ var feishuPlugin = {
         var docToken = params.docToken || params.token;
         if (!docToken) throw new Error("docToken is required");
         var result = await manageFeishuDocPermission(feishuCfg, docToken, params.docType, params.memberId, params.memberType, params.perm, params.permAction || params.subAction || "list");
+        var _r = { ok: true, ...result };
+        return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
+      }
+      // --- Chat management ---
+      if (action === "createChat") {
+        var result = await createFeishuChat(feishuCfg, params.name, params.description, params.userIds);
+        var _r = { ok: true, ...result };
+        return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
+      }
+      if (action === "addChatMembers") {
+        var chatId = _extractChatId();
+        if (!chatId) throw new Error("chatId is required");
+        if (!params.userIds || !params.userIds.length) throw new Error("userIds is required");
+        var result = await addFeishuChatMembers(feishuCfg, chatId, params.userIds);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      }
+      if (action === "removeChatMembers") {
+        var chatId = _extractChatId();
+        if (!chatId) throw new Error("chatId is required");
+        if (!params.userIds || !params.userIds.length) throw new Error("userIds is required");
+        var result = await removeFeishuChatMembers(feishuCfg, chatId, params.userIds);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      }
+      // --- Folder ---
+      if (action === "createFolder") {
+        if (!params.name) throw new Error("name is required");
+        var result = await createFeishuFolder(feishuCfg, params.name, params.parentToken);
+        var _r = { ok: true, ...result };
+        return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
+      }
+      // --- Bitable ---
+      if (action === "listBitableTables") {
+        if (!params.appToken) throw new Error("appToken is required");
+        var result = await listFeishuBitableTables(feishuCfg, params.appToken);
+        var _r = { ok: true, ...result };
+        return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
+      }
+      if (action === "listBitableRecords") {
+        if (!params.appToken) throw new Error("appToken is required");
+        if (!params.tableId) throw new Error("tableId is required");
+        var result = await listFeishuBitableRecords(feishuCfg, params.appToken, params.tableId, params.filter, params.pageSize);
+        var _r = { ok: true, ...result };
+        return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
+      }
+      if (action === "createBitableRecord") {
+        if (!params.appToken) throw new Error("appToken is required");
+        if (!params.tableId) throw new Error("tableId is required");
+        if (!params.fields) throw new Error("fields is required");
+        var result = await createFeishuBitableRecord(feishuCfg, params.appToken, params.tableId, params.fields);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      }
+      if (action === "updateBitableRecord") {
+        if (!params.appToken) throw new Error("appToken is required");
+        if (!params.tableId) throw new Error("tableId is required");
+        if (!params.recordId) throw new Error("recordId is required");
+        if (!params.fields) throw new Error("fields is required");
+        var result = await updateFeishuBitableRecord(feishuCfg, params.appToken, params.tableId, params.recordId, params.fields);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      }
+      if (action === "deleteBitableRecord") {
+        if (!params.appToken) throw new Error("appToken is required");
+        if (!params.tableId) throw new Error("tableId is required");
+        if (!params.recordId) throw new Error("recordId is required");
+        var result = await deleteFeishuBitableRecord(feishuCfg, params.appToken, params.tableId, params.recordId);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      }
+      // --- Wiki ---
+      if (action === "listWikiSpaces") {
+        var result = await listFeishuWikiSpaces(feishuCfg);
+        var _r = { ok: true, ...result };
+        return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
+      }
+      if (action === "listWikiNodes") {
+        if (!params.spaceId) throw new Error("spaceId is required");
+        var result = await listFeishuWikiNodes(feishuCfg, params.spaceId);
+        var _r = { ok: true, ...result };
+        return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
+      }
+      if (action === "getWikiNode") {
+        if (!params.nodeToken) throw new Error("nodeToken is required");
+        var result = await getFeishuWikiNode(feishuCfg, params.spaceId, params.nodeToken);
+        var _r = { ok: true, ...result };
+        return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
+      }
+      // --- AI services ---
+      if (action === "translateText") {
+        if (!params.text) throw new Error("text is required");
+        var result = await translateFeishuText(feishuCfg, params.text, params.sourceLang, params.targetLang);
+        var _r = { ok: true, ...result };
+        return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
+      }
+      if (action === "ocrImage") {
+        var image = params.image || params.imageUrl;
+        if (!image) throw new Error("image is required");
+        var result = await ocrFeishuImage(feishuCfg, image);
+        var _r = { ok: true, ...result };
+        return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
+      }
+      if (action === "speechToText") {
+        if (!params.speech && !params.fileId) throw new Error("speech or fileId is required");
+        var result = await speechToTextFeishu(feishuCfg, params.speech, params.fileId);
+        var _r = { ok: true, ...result };
+        return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
+      }
+      // --- Downloads ---
+      if (action === "downloadImage") {
+        var imageKey = params.imageKey || params.fileKey;
+        if (!imageKey) throw new Error("imageKey is required");
+        var savePath = params.savePath || params.path || "/tmp/feishu-image-" + Date.now();
+        var result = await downloadFeishuImage(feishuCfg, imageKey, savePath, params.messageId);
+        var _r = { ok: true, ...result };
+        return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
+      }
+      if (action === "downloadFile" || action === "downloadAttachment") {
+        var fileKey = params.fileKey || params.imageKey;
+        if (!fileKey) throw new Error("fileKey is required");
+        var savePath = params.savePath || params.path || "/tmp/feishu-file-" + Date.now();
+        var result = await downloadFeishuFile(feishuCfg, fileKey, savePath, params.messageId);
         var _r = { ok: true, ...result };
         return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
       }
