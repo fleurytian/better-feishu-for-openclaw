@@ -6077,8 +6077,9 @@ var feishuPlugin = {
       "- `action: \"unpinMessage\"`, `messageId` — 取消置顶",
       "- `action: \"recallMessage\"`, `messageId` — 撤回消息",
       "- `action: \"updateMessage\"`, `messageId`, `content` — 编辑消息",
-      "- `action: \"listThreadMessages\"`, `threadId`, `pageSize?` — 列出话题消息",
-      "- `action: \"replyInThread\"`, `messageId`, `content`, `msgType?` — 在话题内回复",
+      // DISABLED: thread actions (uncomment to re-enable)
+      // "- `action: \"listThreadMessages\"`, `threadId`, `pageSize?` — 列出话题消息",
+      // "- `action: \"replyInThread\"`, `messageId`, `content`, `msgType?` — 在话题内回复",
       "",
       "**群聊查询:**",
       "- `action: \"getChatInfo\"`, `chatId` — 获取群聊详情",
@@ -6196,9 +6197,9 @@ var feishuPlugin = {
   actions: {
     listActions: ({ cfg }) => {
       if (!cfg.channels?.feishu) return [];
-      return ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"];
+      return ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", /* "listThreadMessages", "replyInThread", */ "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"];
     },
-    supportsAction: ({ action }) => ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"].indexOf(action) !== -1,
+    supportsAction: ({ action }) => ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", /* "listThreadMessages", "replyInThread", */ "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"].indexOf(action) !== -1,
     handleAction: async ({ action, params, cfg }) => {
       var feishuCfg = cfg.channels?.feishu;
       if (!feishuCfg) {
@@ -6329,21 +6330,22 @@ var feishuPlugin = {
         var _r = { ok: true, ...result };
         return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
       }
-      if (action === "listThreadMessages") {
-        var threadId = params.threadId;
-        if (!threadId) throw new Error("threadId is required");
-        var result = await listThreadMessagesFeishu(feishuCfg, threadId, params.pageSize || params.limit);
-        var _r = { ok: true, ...result };
-        return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
-      }
-      if (action === "replyInThread") {
-        var messageId = params.messageId;
-        if (!messageId) throw new Error("messageId is required");
-        var content = params.content || params.text;
-        if (!content) throw new Error("content is required");
-        var result = await replyInThreadFeishu(feishuCfg, messageId, content, params.msgType);
-        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
-      }
+      // DISABLED: thread actions (uncomment to re-enable)
+      // if (action === "listThreadMessages") {
+      //   var threadId = params.threadId;
+      //   if (!threadId) throw new Error("threadId is required");
+      //   var result = await listThreadMessagesFeishu(feishuCfg, threadId, params.pageSize || params.limit);
+      //   var _r = { ok: true, ...result };
+      //   return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
+      // }
+      // if (action === "replyInThread") {
+      //   var messageId = params.messageId;
+      //   if (!messageId) throw new Error("messageId is required");
+      //   var content = params.content || params.text;
+      //   if (!content) throw new Error("content is required");
+      //   var result = await replyInThreadFeishu(feishuCfg, messageId, content, params.msgType);
+      //   return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      // }
       if (action === "pinMessage") {
         var messageId = params.messageId;
         if (!messageId) throw new Error("messageId is required");
