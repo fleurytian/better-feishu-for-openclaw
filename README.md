@@ -408,6 +408,23 @@ cd ~/openclaw && nohup node openclaw.mjs gateway > /tmp/openclaw.log 2>&1 &
 
 ---
 
+## Changelog
+
+### 2026-02-11
+
+**重大修复：消除 agent 幻觉问题**
+
+- **修复 18 个未接线的 action handler** — 之前 `handleAction` 只实现了 20/38 个声明的 action，调用未接线的 action 会直接报错 `"Action X is not supported for feishu"`。现已全部接线到对应的 helper 函数（群聊管理、多维表格、知识库、AI 服务、文件下载等）。
+- **精简 messageToolHints** — 只保留实际在用的功能（react、消息管理、群聊查询、文档、电子表格、云空间），移除未启用权限的 action 声明（多维表格、知识库、AI 服务等），防止 agent 尝试调用不可用的 API。
+- **补充遗漏的 action 文档** — `listThreadMessages`（话题消息列表）和 `replyInThread`（话题内回复）已有实现但未在 hints 中声明，现已补充。
+
+**其他修复**
+
+- **修复 markdownToPost 空段落导致 API 400 错误** — 飞书 post 格式不允许空段落（会触发 error code 230001），现在跳过空段落而非插入空 text 元素。
+- **修复 sendText 定时任务发送格式** — 定时任务发送消息现在使用 post 富文本格式而非纯 text，保持格式一致。
+
+---
+
 ## Known Issues
 
 ### `Action readDocument does not accept a target` (OpenClaw 框架 bug)
