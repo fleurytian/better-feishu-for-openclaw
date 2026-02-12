@@ -4182,6 +4182,7 @@ function markdownToPost(text) {
 
   return {
     zh_cn: {
+      title: "",
       content: content
     }
   };
@@ -4351,15 +4352,21 @@ var feishuOutbound = {
       return markdownPatterns.some((p) => p.test(text2));
     }
     
-    // 与 deliver 逻辑一致：>2000字发卡片，否则发 post 富文本，永远不发纯 text
+    // 智能判断：卡片 > post富文本 > 纯文本
     const CARD_THRESHOLD = 2000;
     const useCard = text.length > CARD_THRESHOLD;
+    const usePost = !useCard && hasMarkdown(text);
     const result = useCard ? await sendMarkdownCardFeishu({
       cfg: feishuCfg,
       to: targetId,
       text,
       receiveIdType
-    }) : await sendPostFeishu({
+    }) : usePost ? await sendPostFeishu({
+      cfg: feishuCfg,
+      to: targetId,
+      text,
+      receiveIdType
+    }) : await sendMessageFeishu({
       cfg: feishuCfg,
       to: targetId,
       text,
