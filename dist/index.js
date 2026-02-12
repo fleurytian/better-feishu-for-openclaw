@@ -4209,7 +4209,12 @@ async function sendPostFeishu(params) {
       chatId: to
     };
   } catch (err) {
-    throw new Error(`Feishu send post failed: ${String(err)}`);
+    // post 格式失败时 fallback 到纯文本
+    try {
+      return await sendMessageFeishu({ cfg, to, text, receiveIdType });
+    } catch (fallbackErr) {
+      throw new Error(`Feishu send post failed: ${String(err)}`);
+    }
   }
 }
 
@@ -4940,6 +4945,7 @@ async function handleFeishuMessage(params) {
       const CARD_THRESHOLD = 2000; // 超过2000字用卡片
 
       // 发送 post 富文本消息（使用 tag: "md" 支持 markdown 渲染，包括代码块和表格）
+      // 失败时 fallback 到纯文本
       async function sendPostMd(to, text) {
         const client = createFeishuClientFromConfig(channelCfg);
         const postContent = {
@@ -4947,14 +4953,18 @@ async function handleFeishuMessage(params) {
             content: [[{ tag: "md", text: text }]]
           }
         };
-        await client.im.v1.message.create({
-          params: { receive_id_type: "chat_id" },
-          data: {
-            receive_id: to,
-            msg_type: "post",
-            content: JSON.stringify(postContent)
-          }
-        });
+        try {
+          await client.im.v1.message.create({
+            params: { receive_id_type: "chat_id" },
+            data: {
+              receive_id: to,
+              msg_type: "post",
+              content: JSON.stringify(postContent)
+            }
+          });
+        } catch (err) {
+          await sendMessageFeishu({ cfg: channelCfg, to, text, receiveIdType: "chat_id" });
+        }
       }
 
       const rawText = payload.text ?? "";
