@@ -4724,14 +4724,22 @@ function buildInboundContext(ctx, sessionKey, accountId) {
   const to = isGroup ? `chat:${ctx.chatId}` : `user:${ctx.senderId}`;
   const displayName = ctx.senderName || ctx.senderId;
   var body = ctx.content;
+  // 生成北京时间时间戳
+  var now = new Date();
+  var bjTime = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(now).replace(" ", " ");
+  var dow = new Intl.DateTimeFormat("en-US", { timeZone: "Asia/Shanghai", weekday: "short" }).format(now);
+  var timeEnvelope = `[${dow} ${bjTime} CST]`;
+
   if (isGroup) {
-    var prefix = `[chatId=${ctx.chatId} sender=${displayName}`;
+    var prefix = `${timeEnvelope} [chatId=${ctx.chatId} sender=${displayName}`;
     // Add thread indicator if message is in a thread
     if (ctx.threadId) {
       prefix += ` inThread=true rootId=${ctx.rootId}`;
     }
     prefix += `] `;
     body = prefix + ctx.content;
+  } else {
+    body = `${timeEnvelope} ${ctx.content}`;
   }
   return {
     Body: body,
