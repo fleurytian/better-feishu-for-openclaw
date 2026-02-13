@@ -19,6 +19,7 @@
 - **旁听消息前缀**：未被 @ 的群消息会添加 `[旁听，保持旁听不回复则输出NO_REPLY]` 前缀
 - **选择性回复**：agent 可根据上下文决定是否回复旁听消息，回复 `NO_REPLY` 则不发送
 - **需配合 SOUL.md**：在 workspace 的 SOUL.md 中配置旁听行为规则（见下方模板）
+- **必须权限**：飞书应用需开通 `im:message.group_msg` 权限（接收群内所有消息），仅有 `im:message.group_at_msg:readonly` 无法接收未 @ 的消息，旁听模式将不生效
 
 ### 飞书 API 集成
 - **表情回应**：对消息添加/移除表情（THUMBSUP、SMILE 等 50+ 表情）
@@ -353,6 +354,20 @@ tail -100 /tmp/openclaw.log | grep -i "receive\|message"
 1. 如果没有收到消息日志 → WebSocket 连接问题，见上方
 2. 如果收到但没回复 → 检查 `requireMention` 配置，群聊中是否 @了机器人
 3. 让用户尝试私聊机器人测试
+
+---
+
+### 错误：旁听模式不生效（群里未 @ 的消息机器人看不到）
+
+**诊断清单：**
+
+1. **检查飞书权限** — 必须开通 `im:message.group_msg`（接收群内所有消息）。仅有 `im:message.group_at_msg:readonly` 只能收到 @ 机器人的消息，旁听模式无法工作。
+2. **检查配置** — `openclaw.json` 中 `channels.feishu.passiveObserve` 必须为 `true`：
+   ```bash
+   grep passiveObserve ~/.openclaw/openclaw.json
+   ```
+3. **检查 SOUL.md** — workspace 中需要有旁听行为规则，agent 才知道何时回复 `NO_REPLY`。运行安装指南中的模板合并步骤。
+4. **检查插件版本** — 确保 `openclaw.plugin.json` 的 `configSchema` 中声明了 `passiveObserve` 字段。旧版本遗漏了此声明，会导致框架 AJV 验证报错。
 
 ---
 

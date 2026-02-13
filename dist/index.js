@@ -4848,7 +4848,7 @@ async function handleFeishuMessage(params) {
   }
   // --- end 开头@转换 ---
   // --- 旁听前缀 ---
-  if (isGroup && !ctx.mentionedBot) {
+  if (isGroup && !ctx.mentionedBot && ctx._passiveObserve) {
     ctx.content = "[旁听，保持旁听不回复则输出NO_REPLY] " + ctx.content;
   }
   if (!isFeishuRuntimeInitialized()) {

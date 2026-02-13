@@ -66,6 +66,9 @@
       "textChunkLimit": {
         "type": "integer",
         "minimum": 1
+      },
+      "passiveObserve": {
+        "type": "boolean"
       }
     }
   },
