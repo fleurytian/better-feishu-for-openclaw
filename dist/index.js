@@ -4200,7 +4200,7 @@ async function sendPostFeishu(params) {
       data: {
         receive_id: to,
         msg_type: "post",
-        content: JSON.stringify({ post })
+        content: JSON.stringify(post)
       }
     });
     const messageId = result?.data?.message_id ?? "";
@@ -4994,21 +4994,33 @@ async function handleFeishuMessage(params) {
               replyInThread: true
             });
           } else {
-            // ≤2000字 → 用 tag:md 富文本回复话题
-            const client = createFeishuClientFromConfig(channelCfg);
-            const postContent = {
-              zh_cn: {
-                content: [[{ tag: "md", text: chunk }]]
+            // ≤2000字 → 用 post 富文本回复话题，失败则 fallback 纯文本
+            try {
+              const threadClient = createFeishuClientFromConfig(channelCfg);
+              const threadPost = markdownToPost(chunk);
+              await threadClient.im.v1.message.reply({
+                path: { message_id: ctx.rootId },
+                data: {
+                  content: JSON.stringify(threadPost),
+                  msg_type: "post",
+                  reply_in_thread: true
+                }
+              });
+            } catch (threadErr) {
+              try {
+                const threadClient2 = createFeishuClientFromConfig(channelCfg);
+                await threadClient2.im.v1.message.reply({
+                  path: { message_id: ctx.rootId },
+                  data: {
+                    content: JSON.stringify({text: chunk}),
+                    msg_type: "text",
+                    reply_in_thread: true
+                  }
+                });
+              } catch (threadErr2) {
+                logger.error("Thread reply failed (both post and text): " + String(threadErr2));
               }
-            };
-            await client.im.v1.message.reply({
-              path: { message_id: ctx.rootId },
-              data: {
-                content: JSON.stringify(postContent),
-                msg_type: "post",
-                reply_in_thread: true
-              }
-            });
+            }
           }
         } else if (useCard) {
           // 超过2000字 → 发卡片
@@ -5020,7 +5032,7 @@ async function handleFeishuMessage(params) {
           });
         } else {
           // ≤2000字 → 发 post 富文本（tag:md 支持代码块和表格）
-          await sendPostMd(ctx.chatId, chunk);
+          await sendPostFeishu({cfg: channelCfg, to: ctx.chatId, text: chunk, receiveIdType: "chat_id"});
         }
       }
     };
@@ -6125,6 +6137,23 @@ var feishuPlugin = {
       "- `action: \"uploadFile\"`, `path`, `parentToken`/`folderToken`, `fileName?`",
       "- `action: \"createFolder\"`, `name`, `parentToken?`",
       "- `action: \"sendAttachment\"`, `to`, `path` — 发送文件/图片到聊天",
+      "",
+      "### 飞书交互行为准则",
+      "",
+      "**表情回应（react）—— 你的肢体语言：**",
+      "表情是你在飞书里表达情绪的方式，就像真人会点赞、笑、竖大拇指一样自然。",
+      "- 收到好消息、有趣的内容、感谢 → 点个表情（👍🍄😄❤️🎉 等）",
+      "- 用户确认/同意了你的提议 → 点个 👍 或 ✅",
+      "- 看到搞笑的内容 → 😂 或 🤣",
+      "- 不需要每条都回复文字，有时候一个表情就够了",
+      "- 每次对话至少考虑是否该点一个表情，让交流有温度",
+      "",
+      "**文件发送 —— 绝对禁止给路径：**",
+      "用户无法访问你的 VM 文件系统。想分享文件（图片/PDF/文档等），",
+      "**必须**用 sendAttachment 发送，**绝对不要**在消息里写文件路径。",
+      "- 正确: action: sendAttachment, to: chat:oc_xxx, path: /path/to/file",
+      "- 单聊: to: user:ou_xxx（不是 chat:）",
+      "- 错误: 在消息里说 文件在 ~/workspace/xxx.pdf",
       "",
     ],
   },
