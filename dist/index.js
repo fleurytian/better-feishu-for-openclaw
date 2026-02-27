@@ -5491,54 +5491,204 @@ async function deleteFeishuReaction(cfg, messageId, reactionId) {
 }
 
 // --- Patched: document support ---
+
+function parseInlineElements(text) {
+  var elements = [];
+  var pos = 0;
+  var regex = /(\*\*([^*]+)\*\*|__([^_]+)__|~~([^~]+)~~|(?<![*\w])\*([^*\s][^*]*)\*(?![*\w])|(?<![\w])_([^_\s][^_]*)_(?![\w])|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
+  var match;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > pos) {
+      elements.push({ text_run: { content: text.slice(pos, match.index) } });
+    }
+    if (match[2] || match[3]) {
+      // **bold** or __bold__
+      elements.push({ text_run: { content: match[2] || match[3], text_element_style: { bold: true } } });
+    } else if (match[4]) {
+      // ~~strikethrough~~
+      elements.push({ text_run: { content: match[4], text_element_style: { strikethrough: true } } });
+    } else if (match[5] || match[6]) {
+      // *italic* or _italic_
+      elements.push({ text_run: { content: match[5] || match[6], text_element_style: { italic: true } } });
+    } else if (match[7]) {
+      // `code`
+      elements.push({ text_run: { content: match[7], text_element_style: { inline_code: true } } });
+    } else if (match[8] && match[9]) {
+      // [text](url)
+      elements.push({ text_run: { content: match[8], text_element_style: { link: { url: match[9] } } } });
+    }
+    pos = match.index + match[0].length;
+  }
+  if (pos < text.length) {
+    elements.push({ text_run: { content: text.slice(pos) } });
+  }
+  if (elements.length === 0) {
+    elements.push({ text_run: { content: text } });
+  }
+  return elements;
+}
+
 function markdownToFeishuBlocks(text) {
   var lines = text.split("\n");
   var blocks = [];
+  var inCodeBlock = false;
+  var codeLines = [];
+  var codeLang = 1;
+  var langMap = {
+    "plaintext": 1, "abap": 2, "ada": 3, "apache": 4, "apex": 5,
+    "assembly": 6, "bash": 7, "csharp": 8, "c#": 8, "c++": 9, "cpp": 9,
+    "c": 10, "cobol": 11, "css": 12, "coffeescript": 13, "d": 14,
+    "dart": 15, "delphi": 16, "django": 17, "dockerfile": 18, "elixir": 19,
+    "erlang": 20, "fortran": 21, "foxpro": 22, "go": 23, "groovy": 24,
+    "html": 25, "htmlbars": 26, "http": 27, "haskell": 28, "json": 29,
+    "java": 30, "javascript": 31, "js": 31, "julia": 32, "kotlin": 33,
+    "latex": 34, "lisp": 35, "logo": 36, "lua": 37, "matlab": 38,
+    "makefile": 39, "markdown": 40, "md": 40, "nginx": 41,
+    "objectivec": 42, "objective-c": 42, "openedgeabl": 43, "php": 44,
+    "perl": 45, "postscript": 46, "powershell": 47, "prolog": 48,
+    "protobuf": 49, "python": 50, "py": 50, "r": 51, "rpg": 52,
+    "ruby": 53, "rb": 53, "rust": 54, "rs": 54, "sas": 55, "scss": 56,
+    "sql": 57, "scala": 58, "scheme": 59, "scratch": 60, "shell": 61,
+    "sh": 61, "swift": 62, "thrift": 63, "typescript": 64, "ts": 64,
+    "vbscript": 65, "visual basic": 66, "vb": 66, "xml": 67, "yaml": 68,
+    "yml": 68
+  };
   for (var i = 0; i < lines.length; i++) {
     var line = lines[i];
-    if (line.trim() === "") continue;
-    if (line.trim() === "---" || line.trim() === "***") {
-      blocks.push({ block_type: 22 }); // divider
+    // Code block fence
+    if (line.trim().startsWith("```")) {
+      if (!inCodeBlock) {
+        inCodeBlock = true;
+        codeLines = [];
+        var langStr = line.trim().slice(3).trim().toLowerCase();
+        codeLang = langMap[langStr] || 1;
+      } else {
+        inCodeBlock = false;
+        blocks.push({
+          block_type: 14,
+          code: {
+            style: { language: codeLang, wrap: false },
+            elements: [{ text_run: { content: codeLines.join("\n") } }]
+          }
+        });
+        codeLines = [];
+        codeLang = 1;
+      }
       continue;
     }
+    if (inCodeBlock) {
+      codeLines.push(line);
+      continue;
+    }
+    // Empty line → paragraph separator
+    if (line.trim() === "") {
+      blocks.push({
+        block_type: 2,
+        text: { elements: [{ text_run: { content: "" } }] }
+      });
+      continue;
+    }
+    // Divider
+    if (/^(---+|\*\*\*+|___+)\s*$/.test(line.trim())) {
+      blocks.push({ block_type: 22, divider: {} });
+      continue;
+    }
+    // Table: starts with | ... |
+    if (/^\|.+\|/.test(line.trim())) {
+      var tableRows = [];
+      var hasHeader = false;
+      while (i < lines.length && /^\|.+\|/.test(lines[i].trim())) {
+        var rowLine = lines[i].trim();
+        // Check if this is a separator line like |---|---|
+        if (/^\|[\s:|-]+\|$/.test(rowLine)) {
+          hasHeader = tableRows.length > 0;
+          i++;
+          continue;
+        }
+        var cells = rowLine.split("|").slice(1, -1).map(function(c) { return c.trim(); });
+        tableRows.push(cells);
+        i++;
+      }
+      i--; // back up since the for loop will i++
+      if (tableRows.length > 0) {
+        var colCount = Math.max.apply(null, tableRows.map(function(r) { return r.length; }));
+        // Normalize rows to same column count
+        tableRows = tableRows.map(function(r) {
+          while (r.length < colCount) r.push("");
+          return r;
+        });
+        blocks.push({
+          block_type: 31,
+          _table: { rows: tableRows, colCount: colCount, hasHeader: hasHeader }
+        });
+      }
+      continue;
+    }
+    // Heading
     var headingMatch = line.match(/^(#{1,9})\s+(.+)/);
     if (headingMatch) {
-      var level = headingMatch[1].length; // 1-9
-      var blockType = 2 + level; // heading1=3, heading2=4, ...
+      var level = headingMatch[1].length;
+      var blockType = 2 + level;
       var hBlock = { block_type: blockType };
       var hKey = "heading" + level;
-      hBlock[hKey] = { elements: [{ text_run: { content: headingMatch[2] } }] };
+      hBlock[hKey] = { elements: parseInlineElements(headingMatch[2]) };
       blocks.push(hBlock);
       continue;
     }
+    // Todo (check before bullet to avoid being consumed)
+    var todoMatch = line.match(/^[-*]\s+\[([ xX])\]\s+(.*)/);
+    if (todoMatch) {
+      var done = todoMatch[1].toLowerCase() === "x";
+      blocks.push({
+        block_type: 17,
+        todo: {
+          style: { done: done },
+          elements: parseInlineElements(todoMatch[2])
+        }
+      });
+      continue;
+    }
+    // Bullet
     var bulletMatch = line.match(/^[-*]\s+(.+)/);
     if (bulletMatch) {
       blocks.push({
         block_type: 12,
-        bullet: { elements: [{ text_run: { content: bulletMatch[1] } }] }
+        bullet: { elements: parseInlineElements(bulletMatch[1]) }
       });
       continue;
     }
+    // Ordered list
     var orderedMatch = line.match(/^\d+\.\s+(.+)/);
     if (orderedMatch) {
       blocks.push({
         block_type: 13,
-        ordered: { elements: [{ text_run: { content: orderedMatch[1] } }] }
+        ordered: { elements: parseInlineElements(orderedMatch[1]) }
       });
       continue;
     }
-    var quoteMatch = line.match(/^>\s+(.+)/);
+    // Quote
+    var quoteMatch = line.match(/^>\s+(.*)/);
     if (quoteMatch) {
       blocks.push({
         block_type: 15,
-        quote: { elements: [{ text_run: { content: quoteMatch[1] } }] }
+        quote: { elements: parseInlineElements(quoteMatch[1]) }
       });
       continue;
     }
     // Default: text block
     blocks.push({
       block_type: 2,
-      text: { elements: [{ text_run: { content: line } }] }
+      text: { elements: parseInlineElements(line) }
+    });
+  }
+  // Flush unclosed code block
+  if (inCodeBlock) {
+    blocks.push({
+      block_type: 14,
+      code: {
+        style: { language: codeLang, wrap: false },
+        elements: [{ text_run: { content: codeLines.join("\n") } }]
+      }
     });
   }
   return blocks;
@@ -5546,14 +5696,82 @@ function markdownToFeishuBlocks(text) {
 
 async function batchCreateBlocks(client, documentId, blocks, batchSize) {
   batchSize = batchSize || 50;
-  for (var offset = 0; offset < blocks.length; offset += batchSize) {
-    var chunk = blocks.slice(offset, offset + batchSize);
-    await client.docx.v1.documentBlockChildren.create({
-      path: { document_id: documentId, block_id: documentId },
-      data: { children: chunk },
-      params: { document_revision_id: -1 }
-    });
+  // Split blocks into segments: regular blocks vs table markers
+  var pending = [];
+  async function flushPending() {
+    if (pending.length === 0) return;
+    for (var off = 0; off < pending.length; off += batchSize) {
+      var chunk = pending.slice(off, off + batchSize);
+      await client.docx.v1.documentBlockChildren.create({
+        path: { document_id: documentId, block_id: documentId },
+        data: { children: chunk },
+        params: { document_revision_id: -1 }
+      });
+    }
+    pending = [];
   }
+  for (var i = 0; i < blocks.length; i++) {
+    if (blocks[i]._table) {
+      // Flush regular blocks first
+      await flushPending();
+      // Create table
+      var td = blocks[i]._table;
+      var rowCount = td.rows.length;
+      var colCount = td.colCount;
+      var tableBlock = {
+        block_type: 31,
+        table: {
+          property: {
+            row_size: rowCount,
+            column_size: colCount,
+            header_row: td.hasHeader || false
+          }
+        }
+      };
+      var createResult = await client.docx.v1.documentBlockChildren.create({
+        path: { document_id: documentId, block_id: documentId },
+        data: { children: [tableBlock] },
+        params: { document_revision_id: -1 }
+      });
+      // Find the table block in the response to get cell IDs
+      var createdBlocks = createResult?.data?.children || [];
+      var tableData = null;
+      for (var tb = 0; tb < createdBlocks.length; tb++) {
+        if (createdBlocks[tb].block_type === 31 && createdBlocks[tb].table) {
+          tableData = createdBlocks[tb];
+          break;
+        }
+      }
+      if (tableData && tableData.table && tableData.table.cells) {
+        var cellIds = tableData.table.cells;
+        // cells is a flat array: row0col0, row0col1, ..., row1col0, ...
+        for (var r = 0; r < rowCount; r++) {
+          for (var c = 0; c < colCount; c++) {
+            var cellIdx = r * colCount + c;
+            if (cellIdx < cellIds.length && td.rows[r] && td.rows[r][c] !== undefined) {
+              var cellContent = td.rows[r][c];
+              if (cellContent || cellContent === "") {
+                var cellElements = parseInlineElements(cellContent);
+                try {
+                  await client.docx.v1.documentBlockChildren.create({
+                    path: { document_id: documentId, block_id: cellIds[cellIdx] },
+                    data: { children: [{ block_type: 2, text: { elements: cellElements } }] },
+                    params: { document_revision_id: -1 }
+                  });
+                } catch (e) {
+                  // Skip cell on error, continue with others
+                }
+              }
+            }
+          }
+        }
+      }
+    } else {
+      pending.push(blocks[i]);
+    }
+  }
+  // Flush remaining regular blocks
+  await flushPending();
 }
 
 async function createFeishuDocument(cfg, title, content, folderToken) {
@@ -6225,9 +6443,9 @@ var feishuPlugin = {
       "- `action: \"getChatInfo\"`, `chatId` — 获取群聊详情",
       "- `action: \"getChatMembers\"`, `chatId` — 获取群成员列表",
       "",
-      "**文档:**",
-      "- `action: \"createDocument\"`, `title?`, `content?`(markdown), `folderToken?` — 创建文档",
-      "- `action: \"appendDocument\"`, `documentId`, `content`(markdown) — 追加内容",
+      "**文档:** (推荐两步创建：先 createDocument 只传 title 拿到 documentId，再 appendDocument 传 content)",
+      "- `action: \"createDocument\"`, `title?`, `folderToken?` — 创建空文档，返回 documentId",
+      "- `action: \"appendDocument\"`, `documentId`, `content`(markdown) — 追加内容。支持完整 markdown：**加粗** *斜体* ~~删除线~~ `代码` [链接](url)、# 标题、列表、- [ ] todo、> 引用、```代码块```、--- 分隔线、| 表格 |",
       "- `action: \"readDocument\"`, `documentId` — 读取文档内容",
       "- `action: \"manageDocPermission\"`, `docToken`, `docType`(\"docx\"/\"sheet\"/\"bitable\"/\"file\", 默认\"docx\"), `permAction`(\"add\"/\"remove\"/\"list\"), `memberId?`, `memberType?`(\"openid\"/\"userid\"/\"chat_id\", 默认\"openid\"), `perm?`(\"view\"/\"edit\") — 权限管理（支持文档、表格、多维表格、文件）",
       "",
