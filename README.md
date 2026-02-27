@@ -4,7 +4,7 @@
 
 **作者：** [@QianruTian](https://x.com/QianruTian) | **Agent：** [mushroom](https://moltbook.com/u/mushroom)
 
-**兼容版本：** OpenClaw 2026.2.4+
+**兼容版本：** OpenClaw 2026.2.4+（推荐 2026.2.26+）
 
 **已有飞书插件？** 安装时会自动备份现有插件，支持一键回滚。
 
@@ -14,10 +14,11 @@
 - **≤2000 字消息**：使用 `tag:md` 富文本格式，原生支持代码块、表格等 Markdown 语法
 - **>2000 字消息**：自动转为卡片格式，避免消息过长被截断
 - **话题回复**：支持在话题内回复，保持讨论上下文
+- **配合 Block Streaming**：OpenClaw 2026.2.26+ 支持 `blockStreamingDefault: "on"`，LLM 输出会分块递送，体验更好
 
 ### 群聊旁听模式
-- **旁听消息前缀**：未被 @ 的群消息会添加 `[旁听，保持旁听不回复则输出NO_REPLY]` 前缀
-- **选择性回复**：agent 可根据上下文决定是否回复旁听消息，回复 `NO_REPLY` 则不发送
+- **自主旁听（autonomous）**：未被 @ 的群消息会添加 `[旁听]` 前缀，agent 自行判断是否回复，回复 `NO_REPLY` 则不发送
+- **完全旁听（full，推荐）**：群消息**不触发 LLM 调用**（零成本），缓存在内存 buffer 中；被 @ 时 buffer 自动 flush 为上下文注入（最多 50 条）
 - **需配合 SOUL.md**：在 workspace 的 SOUL.md 中配置旁听行为规则（见下方模板）
 - **必须权限**：飞书应用需开通 `im:message.group_msg` 权限（接收群内所有消息），仅有 `im:message.group_at_msg:readonly` 无法接收未 @ 的消息，旁听模式将不生效
 
@@ -71,6 +72,7 @@
 - `groupPolicy`: `open`
 - `requireMention`: `true`
 - `passiveObserve`: `true`
+- `observeMode`: `"full"`（完全旁听，零 LLM 成本）
 - 安装 workspace 模板: `true`
 
 ---
@@ -208,13 +210,18 @@ echo "插件文件安装完成"
       "connectionMode": "websocket",
       "dmPolicy": "用户选择的私聊策略",
       "groupPolicy": "用户选择的群聊策略",
+      "allowFrom": ["*"],
+      "groupAllowFrom": ["*"],
       "requireMention": true,
-      "passiveObserve": true或false,
+      "passiveObserve": true,
+      "observeMode": "full",
       "sendMarkdownAsCard": false
     }
   }
 }
 ```
+
+**⚠️ OpenClaw 2026.2.26+ 要求：** `dmPolicy: "open"` 的 channel 必须显式声明 `allowFrom: ["*"]` 和 `groupAllowFrom: ["*"]`，否则启动报 config validation 错误。
 
 读取并更新 `~/.openclaw/openclaw.json`。
 
@@ -239,11 +246,8 @@ cat /tmp/better-feishu-for-openclaw/templates/USER.md
 **3. 重启 Gateway**
 
 ```bash
-pkill -f "openclaw-gateway" || true
-rm -f /tmp/openclaw-gateway.lock
-cd ~/openclaw && nohup node openclaw.mjs gateway > /tmp/openclaw.log 2>&1 &
-sleep 5
-pgrep -f "openclaw-gateway" && echo "Gateway 已启动，飞书插件安装完成！"
+systemctl --user restart openclaw-gateway
+echo "Gateway 已重启，飞书插件安装完成！"
 ```
 
 **向用户确认：**
@@ -267,13 +271,13 @@ ls -la ~/.openclaw/extensions/feishu/skills/feishu/SKILL.md && echo "✓ SKILL.m
 echo "=== 检查 openclaw.json 配置 ==="
 grep -A 10 '"feishu"' ~/.openclaw/openclaw.json
 
-# 3. 检查 Gateway 进程
-echo "=== 检查 Gateway 进程 ==="
-pgrep -f "openclaw-gateway" && echo "✓ Gateway 运行中" || echo "✗ Gateway 未运行"
+# 3. 检查 Gateway 服务
+echo "=== 检查 Gateway 服务 ==="
+systemctl --user is-active openclaw-gateway && echo "✓ Gateway 运行中" || echo "✗ Gateway 未运行"
 
 # 4. 检查最近日志
 echo "=== 最近日志（飞书相关）==="
-tail -30 /tmp/openclaw.log | grep -i "feishu\|websocket\|error" | tail -10
+journalctl --user -u openclaw-gateway --no-pager -n 30 | grep -i "feishu\|websocket\|error" | tail -10
 ```
 
 **根据自检结果处理：**
@@ -332,7 +336,7 @@ grep "connectionMode" ~/.openclaw/openclaw.json
 
 **诊断：**
 ```bash
-cat /tmp/openclaw.log | tail -50
+journalctl --user -u openclaw-gateway --no-pager -n 50
 ```
 
 **处理：**
@@ -347,7 +351,7 @@ cat /tmp/openclaw.log | tail -50
 **诊断：**
 ```bash
 # 检查是否收到消息
-tail -100 /tmp/openclaw.log | grep -i "receive\|message"
+journalctl --user -u openclaw-gateway --no-pager -n 100 | grep -i "receive\|message"
 ```
 
 **处理：**
@@ -375,7 +379,7 @@ tail -100 /tmp/openclaw.log | grep -i "receive\|message"
 
 **诊断：**
 ```bash
-tail -50 /tmp/openclaw.log | grep -i "react\|emoji"
+journalctl --user -u openclaw-gateway --no-pager -n 50 | grep -i "react\|emoji"
 ```
 
 **处理：**
@@ -395,9 +399,7 @@ rm -rf ~/.openclaw/extensions/feishu
 mv ~/.openclaw/extensions/feishu.bak.YYYYMMDD_HHMMSS ~/.openclaw/extensions/feishu
 
 # 重启 Gateway
-pkill -f "openclaw-gateway" || true
-rm -f /tmp/openclaw-gateway.lock
-cd ~/openclaw && nohup node openclaw.mjs gateway > /tmp/openclaw.log 2>&1 &
+systemctl --user restart openclaw-gateway
 ```
 
 ---
@@ -423,7 +425,58 @@ cd ~/openclaw && nohup node openclaw.mjs gateway > /tmp/openclaw.log 2>&1 &
 
 ---
 
+## 升级指南
+
+如果已经安装了旧版本，按以下步骤升级：
+
+```bash
+# 1. 拉取最新版本
+cd /tmp
+rm -rf better-feishu-for-openclaw
+git clone https://github.com/fleurytian/better-feishu-for-openclaw.git
+
+# 2. 备份当前版本
+BACKUP_TIME=$(date +%Y%m%d_%H%M%S)
+cp ~/.openclaw/extensions/feishu/dist/index.js ~/.openclaw/extensions/feishu/dist/index.js.bak.$BACKUP_TIME
+
+# 3. 更新文件
+cp /tmp/better-feishu-for-openclaw/dist/index.js ~/.openclaw/extensions/feishu/dist/
+cp /tmp/better-feishu-for-openclaw/openclaw.plugin.json ~/.openclaw/extensions/feishu/
+cp /tmp/better-feishu-for-openclaw/skills/feishu/SKILL.md ~/.openclaw/extensions/feishu/skills/feishu/
+
+# 4. 重启 Gateway
+systemctl --user restart openclaw-gateway
+```
+
+**升级后检查清单：**
+- [ ] `openclaw.json` 中 feishu channel 是否有 `allowFrom: ["*"]` 和 `groupAllowFrom: ["*"]`（v2.26+ 必需）
+- [ ] 是否需要添加 `observeMode: "full"`（推荐，零成本旁听）
+- [ ] 运行时 patch（patch-action-spec.py、patch-channel-target.py）是否需要重新应用
+- [ ] workspace 模板（templates/）是否有新内容需要合并到 SOUL.md、TOOLS.md 等
+
+---
+
 ## Changelog
+
+### 2026-02-27
+
+**完全旁听模式 (observeMode: "full")**
+
+- **新增 `observeMode` 配置项** — 支持 `"autonomous"`（自主旁听，每条消息触发 LLM）和 `"full"`（完全旁听，零 LLM 调用，@ 时批量注入）两种模式
+- **openclaw.plugin.json 补充 configSchema** — 添加 `observeMode` 字段声明，避免框架 AJV 验证报错
+
+**OpenClaw 2026.2.26 兼容性**
+
+- **allowFrom/groupAllowFrom 必须显式声明** — v2.26 要求 `dmPolicy: "open"` 的 channel 必须显式声明 `allowFrom: ["*"]` 和 `groupAllowFrom: ["*"]`
+- **更新 gateway 管理命令** — 统一使用 `systemctl --user restart openclaw-gateway`（不再使用 pkill + nohup）
+- **更新日志命令** — 统一使用 `journalctl --user -u openclaw-gateway`
+
+**文档更新**
+
+- **新增升级指南** — 从旧版本升级的完整步骤和检查清单
+- **更新 SKILL.md** — 同步最新的 action 参数说明和 target 规则
+- **更新 workspace 模板** — SOUL.md 新增进度同步规则、markdown 使用指南、完整表情清单；TOOLS.md 新增旁听模式文档和密钥管理；AGENTS.md 新增 memory_search 黄金规则和 NOW.md 机制
+- **更新 Known Issues** — 修正 patch 目标文件路径
 
 ### 2026-02-11
 
@@ -448,21 +501,22 @@ cd ~/openclaw && nohup node openclaw.mjs gateway > /tmp/openclaw.log 2>&1 &
 
 **根因：** OpenClaw 框架的 `actionRequiresTarget()` 函数对未注册在 `MESSAGE_ACTION_TARGET_MODE` 中的 action 返回 `true`（因为 `undefined !== "none"` = `true`），导致框架从当前会话 context 自动注入 `target`，然后 `applyTargetToParams()` 因 mode 为 `"none"` 而抛出错误。
 
-**影响版本：** OpenClaw 2026.2.4（截至目前未修复）
+**影响版本：** OpenClaw 2026.2.4 ~ 2026.2.26（截至目前未修复）
 
-**解决方案：** 应用以下两个运行时 patch（位于 [openclaw-feishu-pack](https://github.com/fleurytian/better-feishu-for-openclaw) 仓库）：
+**解决方案：** 应用以下两个运行时 patch：
 
 ```bash
 # patch-action-spec.py — 注册所有飞书自定义 action 到 MESSAGE_ACTION_TARGET_MODE
-# patch-channel-target.py — 安全网：未知 action 传了 target 时静默忽略而非报错
+python3 patch-action-spec.py ~/openclaw/dist/infra/outbound/message-action-spec.js
 
-for f in ~/openclaw/dist/extensionAPI.js ~/openclaw/dist/loader-*.js ~/openclaw/dist/reply-*.js; do
-  python3 patch-action-spec.py "$f"
-  python3 patch-channel-target.py "$f"
-done
+# patch-channel-target.py — 安全网：未知 action 传了 target 时静默忽略而非报错
+python3 patch-channel-target.py ~/openclaw/dist/infra/outbound/channel-target.js
 
 # 重启 gateway 生效
 systemctl --user restart openclaw-gateway
 ```
 
-**注意：** 每次 OpenClaw 升级后需重新应用这些 patch。
+**注意：**
+- 每次 OpenClaw 升级后需重新应用这些 patch（dist 目录会被覆盖）
+- patch 脚本是幂等的，重复执行不会出错
+- dist 文件名可能因版本不同而变化，如果上述路径不存在，用 `grep -rl "actionRequiresTarget" ~/openclaw/dist/` 查找目标文件

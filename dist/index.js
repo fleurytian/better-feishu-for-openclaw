@@ -4063,6 +4063,8 @@ var FeishuConfigSchema = external_exports.object({
   /** 群聊是否需要 @机器人才响应 */
   requireMention: external_exports.boolean().optional().default(true),
   passiveObserve: external_exports.boolean().optional().default(false),
+  /** 旁听模式: autonomous=自主旁听(实时转发), full=完全旁听(@时拉历史) */
+  observeMode: external_exports.enum(["autonomous", "full"]).optional().default("autonomous"),
   /** 单聊白名单: 允许的用户 ID 列表 */
   allowFrom: external_exports.array(external_exports.string()).optional(),
   /** 群聊白名单: 允许的会话 ID 列表 */
@@ -4480,6 +4482,25 @@ createLogger("feishu");
 
 // --- Patched: user name lookup with cache ---
 var feishuUserNameCache = /* @__PURE__ */ new Map();
+
+// --- 完全旁听模式：群消息 buffer ---
+// key = chatId, value = Array<{sender, senderName, body, timestamp, messageId, msgType}>
+var groupMessageBuffer = /* @__PURE__ */ new Map();
+var GROUP_BUFFER_LIMIT = 50;
+
+function bufferGroupMessage(chatId, entry) {
+  var buf = groupMessageBuffer.get(chatId) || [];
+  buf.push(entry);
+  while (buf.length > GROUP_BUFFER_LIMIT) buf.shift();
+  groupMessageBuffer.set(chatId, buf);
+}
+
+function flushGroupBuffer(chatId) {
+  var buf = groupMessageBuffer.get(chatId) || [];
+  groupMessageBuffer.set(chatId, []);
+  return buf;
+}
+// --- end buffer ---
 async function fetchFeishuUserName(cfg, openId) {
   if (!openId) return "";
   if (feishuUserNameCache.has(openId)) return feishuUserNameCache.get(openId);
@@ -4847,8 +4868,46 @@ async function handleFeishuMessage(params) {
     }
   }
   // --- end 开头@转换 ---
-  // --- 旁听前缀 ---
-  if (isGroup && !ctx.mentionedBot && ctx._passiveObserve) {
+  // --- 旁听模式处理 ---
+  const observeMode = (isGroup && channelCfg?.groups?.[ctx.chatId]?.observeMode) || channelCfg?.observeMode || "autonomous";
+  if (isGroup && observeMode === "full") {
+    if (!ctx.mentionedBot) {
+      // 完全旁听模式：非@消息不 dispatch，存入内存 buffer，不触发 LLM
+      var senderLabel = ctx.senderName || ctx.senderId || "unknown";
+      var now = new Date();
+      var bjTime = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit" }).format(now);
+      bufferGroupMessage(ctx.chatId, {
+        sender: ctx.senderId,
+        senderName: senderLabel,
+        body: ctx.content,
+        timestamp: bjTime,
+        messageId: ctx.messageId,
+        msgType: ctx.contentType
+      });
+      logger.debug("[full-observe] buffered message from " + senderLabel + " (buffer size=" + (groupMessageBuffer.get(ctx.chatId) || []).length + ")");
+      return; // 不 dispatch，不触发 LLM
+    }
+    // 被@了，从内存 buffer 读取积累的历史消息
+    var buffered = flushGroupBuffer(ctx.chatId);
+    if (buffered.length > 0) {
+      var historyLines = buffered.map(function(m) {
+        return "[" + m.timestamp + " " + m.senderName + "] " + (m.body || "").substring(0, 500);
+      }).join("\n");
+      var histHeader = "[以下是上次回复后的群聊消息，共" + buffered.length + "条]\n";
+      var histFooter = "\n[历史结束]\n";
+      var histInstructions = "[阅读提示]\n" +
+        "1. 注意分辨历史消息的对象：哪些是别人之间的对话，哪些是大家共同参与的话题，哪些跟你直接相关，按需选择性回应\n" +
+        "2. 历史中的图片（[图片 image_key=xxx messageId=xxx]）和文件（[文件 file_key=xxx messageId=xxx]）可以按需用 message(action=\"downloadImage\") 或 message(action=\"downloadFile\") 下载查看\n" +
+        "3. 历史中提到的飞书文档/表格链接，用飞书 skill 的 readDocument/readSpreadsheet 读取，不要用 browser\n" +
+        "4. 历史中的附件同样可以用 message(action=\"downloadAttachment\") 按需下载\n" +
+        "[/阅读提示]\n";
+      ctx.content = histHeader + historyLines + histFooter + histInstructions + "[以下是本次@你的消息]\n" + ctx.content;
+      logger.info("[full-observe] injected " + buffered.length + " buffered messages as context");
+    } else {
+      logger.info("[full-observe] no buffered messages since last reply");
+    }
+  } else if (isGroup && !ctx.mentionedBot && ctx._passiveObserve) {
+    // 自主旁听模式（原有逻辑）
     ctx.content = "[旁听，保持旁听不回复则输出NO_REPLY] " + ctx.content;
   }
   if (!isFeishuRuntimeInitialized()) {
@@ -5485,6 +5544,18 @@ function markdownToFeishuBlocks(text) {
   return blocks;
 }
 
+async function batchCreateBlocks(client, documentId, blocks, batchSize) {
+  batchSize = batchSize || 50;
+  for (var offset = 0; offset < blocks.length; offset += batchSize) {
+    var chunk = blocks.slice(offset, offset + batchSize);
+    await client.docx.v1.documentBlockChildren.create({
+      path: { document_id: documentId, block_id: documentId },
+      data: { children: chunk },
+      params: { document_revision_id: -1 }
+    });
+  }
+}
+
 async function createFeishuDocument(cfg, title, content, folderToken) {
   var client = createFeishuClientFromConfig(cfg);
   var createData = {};
@@ -5499,11 +5570,7 @@ async function createFeishuDocument(cfg, title, content, folderToken) {
   if (content && content.trim()) {
     var blocks = markdownToFeishuBlocks(content);
     if (blocks.length > 0) {
-      await client.docx.v1.documentBlockChildren.create({
-        path: { document_id: documentId, block_id: documentId },
-        data: { children: blocks },
-        params: { document_revision_id: -1 }
-      });
+      await batchCreateBlocks(client, documentId, blocks);
     }
   }
   var docUrl = "https://feishu.cn/docx/" + documentId;
@@ -5519,15 +5586,11 @@ async function appendFeishuDocument(cfg, documentId, content) {
   if (blocks.length === 0) {
     return { documentId: documentId, blocksAdded: 0 };
   }
-  var result = await client.docx.v1.documentBlockChildren.create({
-    path: { document_id: documentId, block_id: documentId },
-    data: { children: blocks },
-    params: { document_revision_id: -1 }
-  });
+  await batchCreateBlocks(client, documentId, blocks);
   return {
     documentId: documentId,
     blocksAdded: blocks.length,
-    children: result?.data?.children?.length ?? 0
+    children: blocks.length
   };
 }
 // --- Patched: sendAttachment support ---
@@ -5773,13 +5836,54 @@ async function getFeishuChatMembers(cfg, chatId) {
 async function listFeishuMessages(cfg, chatId, pageSize) {
   var client = createFeishuClientFromConfig(cfg);
   var result = await client.im.v1.message.list({
-    params: { container_id_type: "chat", container_id: chatId, page_size: pageSize || 20 }
+    params: { container_id_type: "chat", container_id: chatId, page_size: pageSize || 20, sort_type: "ByCreateTimeDesc" }
   });
   var items = result?.data?.items ?? [];
   return { chatId: chatId, messages: items.map(function(m) {
     var body = "";
-    try { body = JSON.parse(m.body?.content || "{}").text || m.body?.content || ""; } catch(e) { body = m.body?.content || ""; }
-    return { messageId: m.message_id, msgType: m.msg_type, senderId: m.sender?.id, senderType: m.sender?.sender_type, createTime: m.create_time, body: body, threadId: m.thread_id };
+    try {
+      var parsed = JSON.parse(m.body?.content || "{}");
+      if (m.msg_type === "text") {
+        body = parsed.text || "";
+      } else if (m.msg_type === "image") {
+        body = "[图片 image_key=" + (parsed.image_key || "unknown") + " messageId=" + m.message_id + "]";
+      } else if (m.msg_type === "file") {
+        body = "[文件: " + (parsed.file_name || "未知") + " file_key=" + (parsed.file_key || "unknown") + " messageId=" + m.message_id + "]";
+      } else if (m.msg_type === "audio") {
+        body = "[语音 file_key=" + (parsed.file_key || "unknown") + " messageId=" + m.message_id + "]";
+      } else if (m.msg_type === "media") {
+        body = "[视频 file_key=" + (parsed.file_key || "unknown") + " messageId=" + m.message_id + "]";
+      } else if (m.msg_type === "sticker") {
+        body = "[表情]";
+      } else if (m.msg_type === "post") {
+        // 富文本：提取文本内容
+        var postText = "";
+        try {
+          var lang = parsed.zh_cn || parsed.en_us || parsed[Object.keys(parsed)[0]] || {};
+          var title = lang.title || "";
+          var contentArr = lang.content || [];
+          var texts = [];
+          if (title) texts.push(title);
+          contentArr.forEach(function(para) {
+            if (Array.isArray(para)) para.forEach(function(el) {
+              if (el.tag === "text" && el.text) texts.push(el.text);
+              else if (el.tag === "a" && el.text) texts.push(el.text);
+              else if (el.tag === "img") texts.push("[图片]");
+              else if (el.tag === "media") texts.push("[媒体]");
+            });
+          });
+          postText = texts.join(" ");
+        } catch(pe) {}
+        body = postText || "[富文本消息]";
+      } else if (m.msg_type === "interactive") {
+        body = "[卡片消息]";
+      } else {
+        body = parsed.text || m.body?.content || "[" + (m.msg_type || "未知类型") + "]";
+      }
+    } catch(e) { body = m.body?.content || "[消息]"; }
+    var mentions = [];
+    try { if (m.mentions && Array.isArray(m.mentions)) mentions = m.mentions.map(function(mt) { return { key: mt.key, id: mt.id, name: mt.name }; }); } catch(e) {}
+    return { messageId: m.message_id, msgType: m.msg_type, senderId: m.sender?.id, senderType: m.sender?.sender_type, createTime: m.create_time, body: body, threadId: m.thread_id, mentions: mentions };
   }), total: items.length };
 }
 

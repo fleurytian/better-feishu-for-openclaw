@@ -106,3 +106,18 @@ message(action="readSpreadsheet", spreadsheetToken="<token>", sheetId="Sheet1", 
 - **`chatId`**（格式 `oc_xxx`，不带 `chat:` 前缀）— 用于其他所有飞书 action
 
 **常见错误：** 自定义 action 传了 `to` 参数 → 框架报错
+
+## 群聊旁听模式
+
+配置项：`channels.feishu.observeMode`，两种模式：
+
+| 模式 | 值 | 行为 |
+|------|------|------|
+| 自主旁听 | `"autonomous"` | 实时收到每条群消息，加 [旁听] 前缀，自己判断要不要回复 |
+| 完全旁听 | `"full"` | 群消息**不触发 LLM 调用**（零成本），缓存在内存 buffer 中；被 @ 时 buffer 自动 flush 为上下文注入（最多50条） |
+
+**全局默认：完全旁听 (`full`)**
+
+**如何分辨当前模式：**
+- 自主旁听：你会收到每条群消息，带 `[旁听]` 前缀
+- 完全旁听：你只在被 @ 时才会收到消息，同时附带历史上下文

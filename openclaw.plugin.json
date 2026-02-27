@@ -69,6 +69,13 @@
       },
       "passiveObserve": {
         "type": "boolean"
+      },
+      "observeMode": {
+        "type": "string",
+        "enum": [
+          "autonomous",
+          "full"
+        ]
       }
     }
   },
