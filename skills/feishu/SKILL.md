@@ -307,6 +307,9 @@ message(path='{"action": "react", "messageId": "om_xxx", ...}')
 
 // 重命名字段
 { "action": "updateBitableField", "appToken": "XXX", "tableId": "tblXXX", "fieldId": "fldXXX", "fieldName": "新名称" }
+
+// 删除字段（主字段不可删）
+{ "action": "deleteBitableField", "appToken": "XXX", "tableId": "tblXXX", "fieldId": "fldXXX" }
 ```
 
 **重要：** 当需要给单选/多选字段新增选项时，用 `updateBitableField` + `addOptions`，**不要用 `addBitableField` 新建同名字段**，否则会产生重复列。

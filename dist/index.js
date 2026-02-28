@@ -6469,6 +6469,15 @@ async function updateFeishuBitableField(cfg, appToken, tableId, fieldId, updates
   return { ok: true, fieldId: field?.field_id, name: field?.field_name, type: field?.type, options: opts.map(function(o) { return o.name; }) };
 }
 
+// Bitable: Delete a field from a table (cannot delete primary field)
+async function deleteFeishuBitableField(cfg, appToken, tableId, fieldId) {
+  var client = createFeishuClientFromConfig(cfg);
+  await client.bitable.v1.appTableField.delete({
+    path: { app_token: appToken, table_id: tableId, field_id: fieldId }
+  });
+  return { ok: true, fieldId: fieldId };
+}
+
 // Bitable: List records
 async function listFeishuBitableRecords(cfg, appToken, tableId, filter, pageSize) {
   var client = createFeishuClientFromConfig(cfg);
@@ -6677,7 +6686,8 @@ var feishuPlugin = {
       "- `action: \"createBitable\"`, `name`, `folderToken?` — 创建新多维表格，返回 appToken 和 url",
       "- `action: \"listBitableTables\"`, `appToken` — 列出数据表（含每个表的字段名和类型）",
       "- `action: \"addBitableField\"`, `appToken`, `tableId`, `fieldName`, `fieldType`(\"text\"/\"number\"/\"select\"/\"multi_select\"/\"date\"/\"checkbox\"/\"person\"/\"url\"/\"attachment\" 或数字), `options?`(select/multi_select 的选项，字符串数组如 [\"选项A\",\"选项B\"] 或对象数组如 [{name:\"选项A\",color:0}]) — 添加新字段",
-      "- `action: \"updateBitableField\"`, `appToken`, `tableId`, `fieldId`(从 listBitableTables 获取), `addOptions?`(要追加的选项，格式同上), `fieldName?`(重命名) — **给已有字段追加选项或重命名**。写数据时遇到新选项值要用这个，不要新建字段！",
+      "- `action: \"updateBitableField\"`, `appToken`, `tableId`, `fieldId`(从 listBitableTables 获取), `addOptions?`(追加选项), `fieldName?`(重命名) — **修改已有字段**：追加选项或重命名。遇到新选项值用这个，不要新建字段！",
+      "- `action: \"deleteBitableField\"`, `appToken`, `tableId`, `fieldId` — 删除字段（主字段不可删）",
       "- `action: \"listBitableRecords\"`, `appToken`, `tableId`, `filter?`, `pageSize?` — 查询记录。filter 用飞书公式语法如 `CurrentValue.[字段名]=\"值\"`",
       "- `action: \"createBitableRecord\"`, `appToken`, `tableId`, `fields`(object) — 新增记录。fields 的 key 必须与字段名完全一致。特殊字段格式：人员=[{\"id\":\"ou_xxx\"}]，单选=\"选项名\"，多选=[\"选项A\",\"选项B\"]，日期=毫秒时间戳，checkbox=true/false，附件=[{\"file_token\":\"xxx\"}]",
       "- `action: \"updateBitableRecord\"`, `appToken`, `tableId`, `recordId`, `fields` — 更新记录（字段格式同上）",
@@ -6801,9 +6811,9 @@ var feishuPlugin = {
   actions: {
     listActions: ({ cfg }) => {
       if (!cfg.channels?.feishu) return [];
-      return ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "createTopicPost", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "createBitable", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "addBitableField", "updateBitableField", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"];
+      return ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "createTopicPost", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "createBitable", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "addBitableField", "updateBitableField", "deleteBitableField", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"];
     },
-    supportsAction: ({ action }) => ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "createTopicPost", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "createBitable", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "addBitableField", "updateBitableField", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"].indexOf(action) !== -1,
+    supportsAction: ({ action }) => ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "createTopicPost", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "createBitable", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "addBitableField", "updateBitableField", "deleteBitableField", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"].indexOf(action) !== -1,
     handleAction: async ({ action, params, cfg }) => {
       var feishuCfg = cfg.channels?.feishu;
       if (!feishuCfg) {
@@ -7094,6 +7104,13 @@ var feishuPlugin = {
         if (params.fieldName) updates.fieldName = params.fieldName;
         if (params.addOptions) updates.addOptions = params.addOptions;
         var result = await updateFeishuBitableField(feishuCfg, params.appToken, params.tableId, params.fieldId, updates);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      }
+      if (action === "deleteBitableField") {
+        if (!params.appToken) throw new Error("appToken is required");
+        if (!params.tableId) throw new Error("tableId is required");
+        if (!params.fieldId) throw new Error("fieldId is required");
+        var result = await deleteFeishuBitableField(feishuCfg, params.appToken, params.tableId, params.fieldId);
         return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
       }
       // --- Wiki ---
