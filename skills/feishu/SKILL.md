@@ -269,6 +269,25 @@ message(path='{"action": "react", "messageId": "om_xxx", ...}')
 
 // 第4步：写入数据（fields 是字段名到值的映射）
 { "action": "createBitableRecord", "appToken": "XXX", "tableId": "tblXXX", "fields": {"书名": "三体", "评分": 9.5} }
+```
+
+**各字段类型的值格式：**
+
+| 字段类型 | 值格式 | 示例 |
+|---------|--------|------|
+| text | 字符串 | `"三体"` |
+| number | 数字 | `9.5` |
+| select | 选项名字符串 | `"在读"` |
+| multi_select | 选项名数组 | `["科幻", "文学"]` |
+| date | 毫秒时间戳 | `1735084800000` |
+| checkbox | 布尔 | `true` |
+| person | **对象数组** | `[{"id": "ou_xxx"}]` |
+| url | 字符串 | `"https://example.com"` |
+| attachment | token数组 | `[{"file_token": "xxx"}]` |
+
+**人员字段注意：** 必须是 `[{"id": "ou_xxx"}]` 格式（数组包对象），不能直接传 `"ou_xxx"` 字符串。`ou_xxx` 从消息的 `sender` 或 `getChatMembers` 获取。
+
+```json
 
 // 第5步：给用户开权限
 { "action": "manageDocPermission", "docToken": "XXX", "docType": "bitable", "action": "add", "memberId": "ou_xxx", "perm": "view" }
