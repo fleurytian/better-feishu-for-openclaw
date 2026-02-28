@@ -6337,7 +6337,19 @@ async function writeFeishuSpreadsheet(cfg, spreadsheetToken, sheetId, range, val
   return { ok: true, spreadsheetToken: spreadsheetToken, updatedRange: rangeStr };
 }
 
-// Bitable: List tables
+// Bitable: Create a new bitable app
+async function createFeishuBitable(cfg, name, folderToken) {
+  var client = createFeishuClientFromConfig(cfg);
+  var data = {};
+  if (name) data.name = name;
+  if (folderToken) data.folder_token = folderToken;
+  var result = await client.bitable.v1.app.create({ data: data });
+  var app = result?.data?.app;
+  if (!app || !app.app_token) throw new Error("Failed to create bitable: " + JSON.stringify(result));
+  return { appToken: app.app_token, name: app.name, url: app.url, revision: app.revision };
+}
+
+// Bitable: List tables (with fields per table)
 async function listFeishuBitableTables(cfg, appToken) {
   var client = createFeishuClientFromConfig(cfg);
   var result = await client.bitable.v1.appTable.list({
@@ -6345,7 +6357,32 @@ async function listFeishuBitableTables(cfg, appToken) {
     params: { page_size: 100 }
   });
   var items = result?.data?.items ?? [];
-  return { appToken: appToken, tables: items.map(function(t) { return { tableId: t.table_id, name: t.name, revision: t.revision }; }), total: items.length };
+  var tables = [];
+  for (var t = 0; t < items.length; t++) {
+    var table = { tableId: items[t].table_id, name: items[t].name, revision: items[t].revision };
+    try {
+      var fr = await client.bitable.v1.appTableField.list({
+        path: { app_token: appToken, table_id: items[t].table_id },
+        params: { page_size: 100 }
+      });
+      table.fields = (fr?.data?.items ?? []).map(function(f) { return { fieldId: f.field_id, name: f.field_name, type: f.type }; });
+    } catch (_) { table.fields = []; }
+    tables.push(table);
+  }
+  return { appToken: appToken, tables: tables, total: tables.length };
+}
+
+// Bitable: Add a field to a table
+async function addFeishuBitableField(cfg, appToken, tableId, fieldName, fieldType) {
+  var client = createFeishuClientFromConfig(cfg);
+  var typeMap = { text: 1, number: 2, select: 3, multi_select: 4, date: 5, checkbox: 7, person: 11, url: 15, attachment: 17 };
+  var typeNum = typeof fieldType === "number" ? fieldType : (typeMap[fieldType] || 1);
+  var result = await client.bitable.v1.appTableField.create({
+    path: { app_token: appToken, table_id: tableId },
+    data: { field_name: fieldName, type: typeNum }
+  });
+  var field = result?.data?.field;
+  return { ok: true, fieldId: field?.field_id, name: field?.field_name, type: field?.type };
 }
 
 // Bitable: List records
@@ -6552,10 +6589,12 @@ var feishuPlugin = {
       "- `action: \"readSpreadsheet\"`, `spreadsheetToken`, `sheetId?`, `range?`",
       "- `action: \"writeSpreadsheet\"`, `spreadsheetToken`, `sheetId`, `range?`, `values`(二维数组)",
       "",
-      "**多维表格 (Bitable):**",
-      "- `action: \"listBitableTables\"`, `appToken` — 列出多维表格内的数据表（返回 tableId + name + 字段 schema）",
+      "**多维表格 (Bitable):** 典型流程：createBitable → listBitableTables 看字段 → addBitableField 加自定义列 → createBitableRecord 写数据",
+      "- `action: \"createBitable\"`, `name`, `folderToken?` — 创建新多维表格，返回 appToken 和 url",
+      "- `action: \"listBitableTables\"`, `appToken` — 列出数据表（含每个表的字段名和类型）",
+      "- `action: \"addBitableField\"`, `appToken`, `tableId`, `fieldName`, `fieldType`(\"text\"/\"number\"/\"select\"/\"multi_select\"/\"date\"/\"checkbox\"/\"person\"/\"url\"/\"attachment\" 或数字) — 添加字段",
       "- `action: \"listBitableRecords\"`, `appToken`, `tableId`, `filter?`, `pageSize?` — 查询记录。filter 用飞书公式语法如 `CurrentValue.[字段名]=\"值\"`",
-      "- `action: \"createBitableRecord\"`, `appToken`, `tableId`, `fields`(object) — 新增记录。fields 的 key 必须与数据表字段名完全一致，先用 listBitableTables 确认字段名",
+      "- `action: \"createBitableRecord\"`, `appToken`, `tableId`, `fields`(object) — 新增记录。fields 的 key 必须与字段名完全一致",
       "- `action: \"updateBitableRecord\"`, `appToken`, `tableId`, `recordId`, `fields` — 更新记录",
       "- `action: \"deleteBitableRecord\"`, `appToken`, `tableId`, `recordId` — 删除记录",
       "",
@@ -6677,9 +6716,9 @@ var feishuPlugin = {
   actions: {
     listActions: ({ cfg }) => {
       if (!cfg.channels?.feishu) return [];
-      return ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "createTopicPost", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"];
+      return ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "createTopicPost", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "createBitable", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "addBitableField", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"];
     },
-    supportsAction: ({ action }) => ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "createTopicPost", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"].indexOf(action) !== -1,
+    supportsAction: ({ action }) => ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "createTopicPost", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "createBitable", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "addBitableField", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"].indexOf(action) !== -1,
     handleAction: async ({ action, params, cfg }) => {
       var feishuCfg = cfg.channels?.feishu;
       if (!feishuCfg) {
@@ -6914,6 +6953,12 @@ var feishuPlugin = {
         return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
       }
       // --- Bitable ---
+      if (action === "createBitable") {
+        if (!params.name) throw new Error("name is required");
+        var result = await createFeishuBitable(feishuCfg, params.name, params.folderToken);
+        var _r = { ok: true, ...result };
+        return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
+      }
       if (action === "listBitableTables") {
         if (!params.appToken) throw new Error("appToken is required");
         var result = await listFeishuBitableTables(feishuCfg, params.appToken);
@@ -6947,6 +6992,13 @@ var feishuPlugin = {
         if (!params.tableId) throw new Error("tableId is required");
         if (!params.recordId) throw new Error("recordId is required");
         var result = await deleteFeishuBitableRecord(feishuCfg, params.appToken, params.tableId, params.recordId);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      }
+      if (action === "addBitableField") {
+        if (!params.appToken) throw new Error("appToken is required");
+        if (!params.tableId) throw new Error("tableId is required");
+        if (!params.fieldName) throw new Error("fieldName is required");
+        var result = await addFeishuBitableField(feishuCfg, params.appToken, params.tableId, params.fieldName, params.fieldType || "text");
         return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
       }
       // --- Wiki ---
