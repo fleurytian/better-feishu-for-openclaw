@@ -8,6 +8,9 @@ metadata: {"openclaw":{"emoji":"\U0001f4ce"}}
 
 # 飞书工具参考
 
+> **本文档可独立使用。** 即使不安装 better-feishu 插件，也可以参考这里的 action 格式和工作流。
+> 如需安装完整插件，请看 [README.md](../../README.md)。
+
 所有飞书操作都通过 `message` 工具调用，核心参数是 `action`。
 
 ## 工具调用格式（重要）
