@@ -12,7 +12,7 @@
 **不要传 target 的 action（框架已 patch 不再报错，但仍建议不传）：**
 - `readDocument`, `appendDocument`, `createDocument`, `manageDocPermission`
 - `readSpreadsheet`, `writeSpreadsheet`, `createSpreadsheet`
-- `createBitable`, `addBitableField`, `updateBitableField`, `deleteBitableField`, `listBitableTables`, `listBitableRecords`, `createBitableRecord`, `updateBitableRecord`, `deleteBitableRecord`
+- `createBitable`, `addBitableField`, `updateBitableField`, `deleteBitableField`, `uploadBitableFile`, `listBitableTables`, `listBitableRecords`, `createBitableRecord`, `updateBitableRecord`, `deleteBitableRecord`
 - `createTopicPost`
 - `getWikiNode`, `listWikiNodes`, `listWikiSpaces`
 - `searchDrive`, `uploadFile`, `createFolder`

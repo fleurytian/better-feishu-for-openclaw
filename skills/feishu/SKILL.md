@@ -287,6 +287,16 @@ message(path='{"action": "react", "messageId": "om_xxx", ...}')
 
 **人员字段注意：** 必须是 `[{"id": "ou_xxx"}]` 格式（数组包对象），不能直接传 `"ou_xxx"` 字符串。`ou_xxx` 从消息的 `sender` 或 `getChatMembers` 获取。
 
+**附件字段注意：** 不能直接传文件路径！必须先上传拿 file_token：
+```json
+// 第1步：上传文件拿 file_token
+{ "action": "uploadBitableFile", "path": "/tmp/screenshot.png" }
+// 返回: { "ok": true, "fileToken": "xxx", "fileName": "screenshot.png" }
+
+// 第2步：写入记录时用 file_token
+{ "action": "createBitableRecord", "appToken": "XXX", "tableId": "tblXXX", "fields": {"截图": [{"file_token": "xxx"}]} }
+```
+
 ```json
 
 // 第5步：给用户开权限

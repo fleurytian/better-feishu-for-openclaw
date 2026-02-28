@@ -5043,44 +5043,61 @@ async function handleFeishuMessage(params) {
 
         if (ctx.threadId) {
           // 话题内回复
-          if (useCard) {
-            // 超过2000字 → 用卡片回复话题
-            await sendMarkdownCardFeishu({
-              cfg: channelCfg,
-              to: ctx.chatId,
-              text: chunk,
-              receiveIdType: "chat_id",
-              replyToMessageId: ctx.rootId,
-              replyInThread: true
-            });
-          } else {
-            // ≤2000字 → 用 post 富文本回复话题，失败则 fallback 纯文本
-            try {
-              const threadClient = createFeishuClientFromConfig(channelCfg);
-              const threadPost = markdownToPost(chunk);
-              await threadClient.im.v1.message.reply({
-                path: { message_id: ctx.rootId },
-                data: {
-                  content: JSON.stringify(threadPost),
-                  msg_type: "post",
-                  reply_in_thread: true
-                }
-              });
-            } catch (threadErr) {
+          logger.debug("Thread reply: threadId=" + ctx.threadId + " rootId=" + ctx.rootId + " messageId=" + ctx.messageId);
+          var threadSent = false;
+          if (ctx.rootId) {
+            // Has rootId → reply within existing thread using message.reply
+            if (useCard) {
               try {
-                const threadClient2 = createFeishuClientFromConfig(channelCfg);
-                await threadClient2.im.v1.message.reply({
-                  path: { message_id: ctx.rootId },
-                  data: {
-                    content: JSON.stringify({text: chunk}),
-                    msg_type: "text",
-                    reply_in_thread: true
-                  }
-                });
-              } catch (threadErr2) {
-                logger.error("Thread reply failed (both post and text): " + String(threadErr2));
+                await sendMarkdownCardFeishu({ cfg: channelCfg, to: ctx.chatId, text: chunk, receiveIdType: "chat_id", replyToMessageId: ctx.rootId, replyInThread: true });
+                threadSent = true;
+              } catch (e) { logger.error("Thread card reply failed: " + String(e)); }
+            } else {
+              try {
+                const tc = createFeishuClientFromConfig(channelCfg);
+                await tc.im.v1.message.reply({ path: { message_id: ctx.rootId }, data: { content: JSON.stringify(markdownToPost(chunk)), msg_type: "post", reply_in_thread: true } });
+                threadSent = true;
+              } catch (e) {
+                logger.error("Thread post reply failed: " + String(e));
+                try {
+                  const tc2 = createFeishuClientFromConfig(channelCfg);
+                  await tc2.im.v1.message.reply({ path: { message_id: ctx.rootId }, data: { content: JSON.stringify({text: chunk}), msg_type: "text", reply_in_thread: true } });
+                  threadSent = true;
+                } catch (e2) { logger.error("Thread text reply failed: " + String(e2)); }
               }
             }
+          }
+          if (!threadSent) {
+            // No rootId (topic group — message IS the thread root) or reply failed
+            // Use message.reply on the messageId itself (reply to the user's message, creating a thread)
+            logger.debug("Trying message.reply on messageId=" + ctx.messageId);
+            if (useCard) {
+              try {
+                await sendMarkdownCardFeishu({ cfg: channelCfg, to: ctx.chatId, text: chunk, receiveIdType: "chat_id", replyToMessageId: ctx.messageId });
+                threadSent = true;
+              } catch (e) { logger.error("Card reply to messageId failed: " + String(e)); }
+            } else {
+              try {
+                const tc3 = createFeishuClientFromConfig(channelCfg);
+                await tc3.im.v1.message.reply({ path: { message_id: ctx.messageId }, data: { content: JSON.stringify(markdownToPost(chunk)), msg_type: "post" } });
+                threadSent = true;
+              } catch (e) {
+                logger.error("Post reply to messageId failed: " + String(e));
+                try {
+                  const tc4 = createFeishuClientFromConfig(channelCfg);
+                  await tc4.im.v1.message.reply({ path: { message_id: ctx.messageId }, data: { content: JSON.stringify({text: chunk}), msg_type: "text" } });
+                  threadSent = true;
+                } catch (e2) { logger.error("Text reply to messageId failed: " + String(e2)); }
+              }
+            }
+          }
+          if (!threadSent) {
+            // Last resort: plain send to chat
+            logger.warn("All thread replies failed, falling back to plain send");
+            try {
+              const fc = createFeishuClientFromConfig(channelCfg);
+              await fc.im.v1.message.create({ params: { receive_id_type: "chat_id" }, data: { receive_id: ctx.chatId, msg_type: "post", content: JSON.stringify(markdownToPost(chunk)) } });
+            } catch (e) { logger.error("Final fallback send failed: " + String(e)); }
           }
         } else if (useCard) {
           // 超过2000字 → 发卡片
@@ -6478,6 +6495,28 @@ async function deleteFeishuBitableField(cfg, appToken, tableId, fieldId) {
   return { ok: true, fieldId: fieldId };
 }
 
+// Bitable: Upload a file and return file_token for attachment fields
+async function uploadFeishuBitableFile(cfg, filePath) {
+  var fs2 = await import("node:fs");
+  var path2 = await import("node:path");
+  var client = createFeishuClientFromConfig(cfg);
+  var fileName = path2.basename(filePath);
+  var fileSize = fs2.statSync(filePath).size;
+  var stream = fs2.createReadStream(filePath);
+  var result = await client.drive.v1.media.uploadAll({
+    data: {
+      file_name: fileName,
+      parent_type: "bitable_file",
+      parent_node: "",
+      size: fileSize,
+      file: stream
+    }
+  });
+  var fileToken = result?.file_token || result?.data?.file_token;
+  if (!fileToken) throw new Error("upload returned no file_token: " + JSON.stringify(result));
+  return { ok: true, fileToken: fileToken, fileName: fileName };
+}
+
 // Bitable: List records
 async function listFeishuBitableRecords(cfg, appToken, tableId, filter, pageSize) {
   var client = createFeishuClientFromConfig(cfg);
@@ -6688,6 +6727,7 @@ var feishuPlugin = {
       "- `action: \"addBitableField\"`, `appToken`, `tableId`, `fieldName`, `fieldType`(\"text\"/\"number\"/\"select\"/\"multi_select\"/\"date\"/\"checkbox\"/\"person\"/\"url\"/\"attachment\" 或数字), `options?`(select/multi_select 的选项，字符串数组如 [\"选项A\",\"选项B\"] 或对象数组如 [{name:\"选项A\",color:0}]) — 添加新字段",
       "- `action: \"updateBitableField\"`, `appToken`, `tableId`, `fieldId`(从 listBitableTables 获取), `addOptions?`(追加选项), `fieldName?`(重命名) — **修改已有字段**：追加选项或重命名。遇到新选项值用这个，不要新建字段！",
       "- `action: \"deleteBitableField\"`, `appToken`, `tableId`, `fieldId` — 删除字段（主字段不可删）",
+      "- `action: \"uploadBitableFile\"`, `path`(本地文件路径) — 上传文件到飞书，返回 file_token。用于附件字段：先 uploadBitableFile 拿 fileToken，再 createBitableRecord 时传 {\"附件字段\": [{\"file_token\": \"xxx\"}]}",
       "- `action: \"listBitableRecords\"`, `appToken`, `tableId`, `filter?`, `pageSize?` — 查询记录。filter 用飞书公式语法如 `CurrentValue.[字段名]=\"值\"`",
       "- `action: \"createBitableRecord\"`, `appToken`, `tableId`, `fields`(object) — 新增记录。fields 的 key 必须与字段名完全一致。特殊字段格式：人员=[{\"id\":\"ou_xxx\"}]，单选=\"选项名\"，多选=[\"选项A\",\"选项B\"]，日期=毫秒时间戳，checkbox=true/false，附件=[{\"file_token\":\"xxx\"}]",
       "- `action: \"updateBitableRecord\"`, `appToken`, `tableId`, `recordId`, `fields` — 更新记录（字段格式同上）",
@@ -6811,9 +6851,9 @@ var feishuPlugin = {
   actions: {
     listActions: ({ cfg }) => {
       if (!cfg.channels?.feishu) return [];
-      return ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "createTopicPost", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "createBitable", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "addBitableField", "updateBitableField", "deleteBitableField", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"];
+      return ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "createTopicPost", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "createBitable", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "addBitableField", "updateBitableField", "deleteBitableField", "uploadBitableFile", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"];
     },
-    supportsAction: ({ action }) => ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "createTopicPost", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "createBitable", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "addBitableField", "updateBitableField", "deleteBitableField", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"].indexOf(action) !== -1,
+    supportsAction: ({ action }) => ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "createTopicPost", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "createBitable", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "addBitableField", "updateBitableField", "deleteBitableField", "uploadBitableFile", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"].indexOf(action) !== -1,
     handleAction: async ({ action, params, cfg }) => {
       var feishuCfg = cfg.channels?.feishu;
       if (!feishuCfg) {
@@ -7111,6 +7151,11 @@ var feishuPlugin = {
         if (!params.tableId) throw new Error("tableId is required");
         if (!params.fieldId) throw new Error("fieldId is required");
         var result = await deleteFeishuBitableField(feishuCfg, params.appToken, params.tableId, params.fieldId);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      }
+      if (action === "uploadBitableFile") {
+        if (!params.path) throw new Error("path is required (local file path)");
+        var result = await uploadFeishuBitableFile(feishuCfg, params.path);
         return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
       }
       // --- Wiki ---
