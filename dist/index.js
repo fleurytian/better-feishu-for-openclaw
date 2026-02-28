@@ -6192,6 +6192,30 @@ async function listThreadMessagesFeishu(cfg, threadId, pageSize) {
   }), total: items.length };
 }
 
+// IM: Create a new topic post in a topic/thread group
+async function createTopicPostFeishu(cfg, chatId, content, msgType, receiveIdType) {
+  var client = createFeishuClientFromConfig(cfg);
+  msgType = msgType || "post";
+  var contentObj;
+  if (msgType === "text") {
+    contentObj = { text: content };
+  } else {
+    // Default: send as post (rich text) built from markdown
+    contentObj = markdownToPost(content);
+  }
+  var result = await client.im.v1.message.create({
+    params: { receive_id_type: receiveIdType || "chat_id" },
+    data: {
+      receive_id: chatId,
+      msg_type: msgType,
+      content: JSON.stringify(contentObj),
+      reply_in_thread: true
+    }
+  });
+  var msg = result?.data;
+  return { ok: true, messageId: msg?.message_id, threadId: msg?.thread_id };
+}
+
 // IM: Reply in thread (话题形式回复)
 async function replyInThreadFeishu(cfg, messageId, content, msgType) {
   var client = createFeishuClientFromConfig(cfg);
@@ -6489,7 +6513,7 @@ var feishuPlugin = {
     chatTypes: ["direct", "channel"],
     media: false,
     reactions: true,
-    threads: false,
+    threads: true,
     edit: false,
     reply: true,
     polls: false
@@ -6510,7 +6534,8 @@ var feishuPlugin = {
       "- `action: \"recallMessage\"`, `messageId` — 撤回消息",
       "- `action: \"updateMessage\"`, `messageId`, `content` — 编辑消息",
       "- `action: \"listThreadMessages\"`, `threadId`, `pageSize?` — 列出话题消息",
-      "- `action: \"replyInThread\"`, `messageId`, `content`, `msgType?` — 在话题内回复",
+      "- `action: \"replyInThread\"`, `messageId`, `content`, `msgType?` — 在已有话题内回复",
+      "- `action: \"createTopicPost\"`, `chatId`, `content` — 在话题群/话题形式群里发起一个新话题帖（content 支持 markdown，会自动转 post 富文本）",
       "",
       "**群聊查询:**",
       "- `action: \"getChatInfo\"`, `chatId` — 获取群聊详情",
@@ -6518,7 +6543,7 @@ var feishuPlugin = {
       "",
       "**文档:** (推荐两步创建：先 createDocument 只传 title 拿到 documentId，再 appendDocument 传 content)",
       "- `action: \"createDocument\"`, `title?`, `folderToken?` — 创建空文档，返回 documentId",
-      "- `action: \"appendDocument\"`, `documentId`, `content`(markdown) — 追加内容。支持完整 markdown：**加粗** *斜体* ~~删除线~~ `代码` [链接](url)、# 标题、列表、- [ ] todo、> 引用、```代码块```、--- 分隔线、| 表格 |",
+      "- `action: \"appendDocument\"`, `documentId`, `content`(markdown) — 追加内容。支持完整 markdown：**加粗** *斜体* ~~删除线~~ `代码` [链接](url)、# 标题、列表、- [ ] todo、> 引用、```代码块```、--- 分隔线、| 表格 |、![alt](url) 图片",
       "- `action: \"readDocument\"`, `documentId` — 读取文档内容",
       "- `action: \"manageDocPermission\"`, `docToken`, `docType`(\"docx\"/\"sheet\"/\"bitable\"/\"file\", 默认\"docx\"), `permAction`(\"add\"/\"remove\"/\"list\"), `memberId?`, `memberType?`(\"openid\"/\"userid\"/\"chat_id\", 默认\"openid\"), `perm?`(\"view\"/\"edit\") — 权限管理（支持文档、表格、多维表格、文件）",
       "",
@@ -6526,6 +6551,13 @@ var feishuPlugin = {
       "- `action: \"createSpreadsheet\"`, `title?`, `folderToken?`",
       "- `action: \"readSpreadsheet\"`, `spreadsheetToken`, `sheetId?`, `range?`",
       "- `action: \"writeSpreadsheet\"`, `spreadsheetToken`, `sheetId`, `range?`, `values`(二维数组)",
+      "",
+      "**多维表格 (Bitable):**",
+      "- `action: \"listBitableTables\"`, `appToken` — 列出多维表格内的数据表（返回 tableId + name + 字段 schema）",
+      "- `action: \"listBitableRecords\"`, `appToken`, `tableId`, `filter?`, `pageSize?` — 查询记录。filter 用飞书公式语法如 `CurrentValue.[字段名]=\"值\"`",
+      "- `action: \"createBitableRecord\"`, `appToken`, `tableId`, `fields`(object) — 新增记录。fields 的 key 必须与数据表字段名完全一致，先用 listBitableTables 确认字段名",
+      "- `action: \"updateBitableRecord\"`, `appToken`, `tableId`, `recordId`, `fields` — 更新记录",
+      "- `action: \"deleteBitableRecord\"`, `appToken`, `tableId`, `recordId` — 删除记录",
       "",
       "**云空间:**",
       "- `action: \"searchDrive\"`, `query`, `fileType?`, `folderToken?`",
@@ -6645,9 +6677,9 @@ var feishuPlugin = {
   actions: {
     listActions: ({ cfg }) => {
       if (!cfg.channels?.feishu) return [];
-      return ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"];
+      return ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "createTopicPost", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"];
     },
-    supportsAction: ({ action }) => ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"].indexOf(action) !== -1,
+    supportsAction: ({ action }) => ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "createTopicPost", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"].indexOf(action) !== -1,
     handleAction: async ({ action, params, cfg }) => {
       var feishuCfg = cfg.channels?.feishu;
       if (!feishuCfg) {
@@ -6791,6 +6823,14 @@ var feishuPlugin = {
         var content = params.content || params.text;
         if (!content) throw new Error("content is required");
         var result = await replyInThreadFeishu(feishuCfg, messageId, content, params.msgType);
+        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+      }
+      if (action === "createTopicPost") {
+        var chatId = params.chatId;
+        if (!chatId) throw new Error("chatId is required");
+        var content = params.content || params.text;
+        if (!content) throw new Error("content is required");
+        var result = await createTopicPostFeishu(feishuCfg, chatId, content, params.msgType);
         return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
       }
       if (action === "pinMessage") {
