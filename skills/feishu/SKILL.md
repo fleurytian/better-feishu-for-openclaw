@@ -261,7 +261,11 @@ message(path='{"action": "react", "messageId": "om_xxx", ...}')
 // 第3步：按需添加字段
 { "action": "addBitableField", "appToken": "XXX", "tableId": "tblXXX", "fieldName": "书名", "fieldType": "text" }
 { "action": "addBitableField", "appToken": "XXX", "tableId": "tblXXX", "fieldName": "评分", "fieldType": "number" }
+// select/multi_select 可带选项列表
+{ "action": "addBitableField", "appToken": "XXX", "tableId": "tblXXX", "fieldName": "状态", "fieldType": "select", "options": ["待读", "在读", "已读"] }
+{ "action": "addBitableField", "appToken": "XXX", "tableId": "tblXXX", "fieldName": "标签", "fieldType": "multi_select", "options": ["科幻", "文学", "历史"] }
 // fieldType 可选: text(1), number(2), select(3), multi_select(4), date(5), checkbox(7), person(11), url(15), attachment(17)
+// options 支持字符串数组 ["A","B"] 或对象数组 [{"name":"A","color":0}]，颜色 0-9
 
 // 第4步：写入数据（fields 是字段名到值的映射）
 { "action": "createBitableRecord", "appToken": "XXX", "tableId": "tblXXX", "fields": {"书名": "三体", "评分": 9.5} }

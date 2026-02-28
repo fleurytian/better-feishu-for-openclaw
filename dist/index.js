@@ -6411,13 +6411,21 @@ async function listFeishuBitableTables(cfg, appToken) {
 }
 
 // Bitable: Add a field to a table
-async function addFeishuBitableField(cfg, appToken, tableId, fieldName, fieldType) {
+async function addFeishuBitableField(cfg, appToken, tableId, fieldName, fieldType, options) {
   var client = createFeishuClientFromConfig(cfg);
   var typeMap = { text: 1, number: 2, select: 3, multi_select: 4, date: 5, checkbox: 7, person: 11, url: 15, attachment: 17 };
   var typeNum = typeof fieldType === "number" ? fieldType : (typeMap[fieldType] || 1);
+  var data = { field_name: fieldName, type: typeNum };
+  // For select/multi_select, pass options as property.options
+  if (options && Array.isArray(options) && (typeNum === 3 || typeNum === 4)) {
+    data.property = { options: options.map(function(opt, idx) {
+      if (typeof opt === "string") return { name: opt, color: idx };
+      return { name: opt.name, color: typeof opt.color === "number" ? opt.color : idx };
+    })};
+  }
   var result = await client.bitable.v1.appTableField.create({
     path: { app_token: appToken, table_id: tableId },
-    data: { field_name: fieldName, type: typeNum }
+    data: data
   });
   var field = result?.data?.field;
   return { ok: true, fieldId: field?.field_id, name: field?.field_name, type: field?.type };
@@ -6630,7 +6638,7 @@ var feishuPlugin = {
       "**多维表格 (Bitable):** 典型流程：createBitable → listBitableTables 看字段 → addBitableField 加自定义列 → createBitableRecord 写数据",
       "- `action: \"createBitable\"`, `name`, `folderToken?` — 创建新多维表格，返回 appToken 和 url",
       "- `action: \"listBitableTables\"`, `appToken` — 列出数据表（含每个表的字段名和类型）",
-      "- `action: \"addBitableField\"`, `appToken`, `tableId`, `fieldName`, `fieldType`(\"text\"/\"number\"/\"select\"/\"multi_select\"/\"date\"/\"checkbox\"/\"person\"/\"url\"/\"attachment\" 或数字) — 添加字段",
+      "- `action: \"addBitableField\"`, `appToken`, `tableId`, `fieldName`, `fieldType`(\"text\"/\"number\"/\"select\"/\"multi_select\"/\"date\"/\"checkbox\"/\"person\"/\"url\"/\"attachment\" 或数字), `options?`(select/multi_select 的选项，字符串数组如 [\"选项A\",\"选项B\"] 或对象数组如 [{name:\"选项A\",color:0}]) — 添加字段",
       "- `action: \"listBitableRecords\"`, `appToken`, `tableId`, `filter?`, `pageSize?` — 查询记录。filter 用飞书公式语法如 `CurrentValue.[字段名]=\"值\"`",
       "- `action: \"createBitableRecord\"`, `appToken`, `tableId`, `fields`(object) — 新增记录。fields 的 key 必须与字段名完全一致",
       "- `action: \"updateBitableRecord\"`, `appToken`, `tableId`, `recordId`, `fields` — 更新记录",
@@ -7036,7 +7044,7 @@ var feishuPlugin = {
         if (!params.appToken) throw new Error("appToken is required");
         if (!params.tableId) throw new Error("tableId is required");
         if (!params.fieldName) throw new Error("fieldName is required");
-        var result = await addFeishuBitableField(feishuCfg, params.appToken, params.tableId, params.fieldName, params.fieldType || "text");
+        var result = await addFeishuBitableField(feishuCfg, params.appToken, params.tableId, params.fieldName, params.fieldType || "text", params.options);
         return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
       }
       // --- Wiki ---
