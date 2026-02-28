@@ -6346,6 +6346,25 @@ async function createFeishuBitable(cfg, name, folderToken) {
   var result = await client.bitable.v1.app.create({ data: data });
   var app = result?.data?.app;
   if (!app || !app.app_token) throw new Error("Failed to create bitable: " + JSON.stringify(result));
+  // Clean up default empty records
+  try {
+    var tables = await client.bitable.v1.appTable.list({
+      path: { app_token: app.app_token }, params: { page_size: 10 }
+    });
+    for (var ti = 0; ti < (tables?.data?.items || []).length; ti++) {
+      var tid = tables.data.items[ti].table_id;
+      var recs = await client.bitable.v1.appTableRecord.list({
+        path: { app_token: app.app_token, table_id: tid }, params: { page_size: 100 }
+      });
+      var ids = (recs?.data?.items || []).map(function(r) { return r.record_id; });
+      if (ids.length > 0) {
+        await client.bitable.v1.appTableRecord.batchDelete({
+          path: { app_token: app.app_token, table_id: tid },
+          data: { records: ids }
+        });
+      }
+    }
+  } catch(_) { /* best effort */ }
   return { appToken: app.app_token, name: app.name, url: app.url, revision: app.revision };
 }
 
