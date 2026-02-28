@@ -4910,18 +4910,6 @@ async function handleFeishuMessage(params) {
     // 自主旁听模式（原有逻辑）
     ctx.content = "[旁听，保持旁听不回复则输出NO_REPLY] " + ctx.content;
   }
-  // --- 飞书规则强制注入（每条消息都带，模型无法跳过）---
-  var _feishuRules = "[飞书规则 - 必须遵守]\n" +
-    "1. react 表情用飞书 emoji_type（THUMBSUP/HEART/LOL/DONE/OnIt 等），不是 unicode emoji（👍❤️ 等无效）\n" +
-    "2. 每条消息先 react 再决定回不回复，不 react = 已读不回\n" +
-    "3. 分享文件必须用 sendAttachment（to + path），绝对不要在消息里发文件路径\n" +
-    "4. 自定义 action（文档/表格/多维表格/Wiki/云空间/翻译/OCR/下载等）不传 to 参数，否则报错\n" +
-    "5. 创建文档两步走：先 createDocument 只传 title → 拿 documentId → 再 appendDocument 传 content\n" +
-    "6. 收到飞书文档/表格链接用 readDocument/readSpreadsheet，不要用 browser\n" +
-    "7. 单聊发附件 to 格式是 user:ou_xxx，不是 chat:\n" +
-    "[/飞书规则]\n";
-  ctx.content = _feishuRules + ctx.content;
-  // --- end 飞书规则强制注入 ---
   if (!isFeishuRuntimeInitialized()) {
     logger.warn("runtime not initialized, skipping dispatch");
     return;
@@ -6481,21 +6469,19 @@ var feishuPlugin = {
       "### 飞书交互行为准则",
       "",
       "**表情回应（react）—— 你的肢体语言：**",
-      "飞书使用专有 emoji_type（不是 unicode），通过 `action: \"react\"`, `messageId`, `emoji` 调用。",
-      "常用：THUMBSUP / HEART / LOL / DONE / OnIt / MUSCLE / APPLAUSE / FINGERHEART / SHOCKED / FACEPALM / GoGoGo",
-      "- 收到好消息、感谢 → THUMBSUP 或 HEART",
-      "- 确认/同意 → DONE 或 THUMBSUP",
-      "- 搞笑内容 → LOL 或 LAUGH",
-      "- 工作中 → Typing / OnIt / OneSecond",
-      "- 不需要每条都回复文字，有时候一个 react 就够了",
-      "- 每条消息先 react，再决定回不回复文字",
-      "- 取消 react: 加 `reactionId`, `remove: true`",
+      "表情是你在飞书里表达情绪的方式，就像真人会点赞、笑、竖大拇指一样自然。",
+      "- 收到好消息、有趣的内容、感谢 → 点个表情（👍🍄😄❤️🎉 等）",
+      "- 用户确认/同意了你的提议 → 点个 👍 或 ✅",
+      "- 看到搞笑的内容 → 😂 或 🤣",
+      "- 不需要每条都回复文字，有时候一个表情就够了",
+      "- 每次对话至少考虑是否该点一个表情，让交流有温度",
       "",
       "**文件发送 —— 绝对禁止给路径：**",
-      "用户无法访问你的文件系统。想分享文件必须用 sendAttachment。",
-      "- 群聊: action: sendAttachment, to: chat:oc_xxx, path: /path/to/file",
+      "用户无法访问你的 VM 文件系统。想分享文件（图片/PDF/文档等），",
+      "**必须**用 sendAttachment 发送，**绝对不要**在消息里写文件路径。",
+      "- 正确: action: sendAttachment, to: chat:oc_xxx, path: /path/to/file",
       "- 单聊: to: user:ou_xxx（不是 chat:）",
-      "- 绝对不要在消息里写文件路径",
+      "- 错误: 在消息里说 文件在 ~/workspace/xxx.pdf",
       "",
     ],
   },
