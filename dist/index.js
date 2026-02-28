@@ -5696,25 +5696,31 @@ function markdownToFeishuBlocks(text) {
 
 async function batchCreateBlocks(client, documentId, blocks, batchSize) {
   batchSize = batchSize || 50;
+  var API_DELAY = 200; // ms between API calls to avoid 429
+  var delay = function(ms) { return new Promise(function(r) { setTimeout(r, ms); }); };
+  var callCount = 0;
+  async function throttledCreate(path, data) {
+    if (callCount > 0) await delay(API_DELAY);
+    callCount++;
+    return client.docx.v1.documentBlockChildren.create({
+      path: path,
+      data: { children: data },
+      params: { document_revision_id: -1 }
+    });
+  }
   // Split blocks into segments: regular blocks vs table markers
   var pending = [];
   async function flushPending() {
     if (pending.length === 0) return;
     for (var off = 0; off < pending.length; off += batchSize) {
       var chunk = pending.slice(off, off + batchSize);
-      await client.docx.v1.documentBlockChildren.create({
-        path: { document_id: documentId, block_id: documentId },
-        data: { children: chunk },
-        params: { document_revision_id: -1 }
-      });
+      await throttledCreate({ document_id: documentId, block_id: documentId }, chunk);
     }
     pending = [];
   }
   for (var i = 0; i < blocks.length; i++) {
     if (blocks[i]._table) {
-      // Flush regular blocks first
       await flushPending();
-      // Create table
       var td = blocks[i]._table;
       var rowCount = td.rows.length;
       var colCount = td.colCount;
@@ -5728,12 +5734,9 @@ async function batchCreateBlocks(client, documentId, blocks, batchSize) {
           }
         }
       };
-      var createResult = await client.docx.v1.documentBlockChildren.create({
-        path: { document_id: documentId, block_id: documentId },
-        data: { children: [tableBlock] },
-        params: { document_revision_id: -1 }
-      });
-      // Find the table block in the response to get cell IDs
+      var createResult = await throttledCreate(
+        { document_id: documentId, block_id: documentId }, [tableBlock]
+      );
       var createdBlocks = createResult?.data?.children || [];
       var tableData = null;
       for (var tb = 0; tb < createdBlocks.length; tb++) {
@@ -5744,25 +5747,29 @@ async function batchCreateBlocks(client, documentId, blocks, batchSize) {
       }
       if (tableData && tableData.table && tableData.table.cells) {
         var cellIds = tableData.table.cells;
-        // cells is a flat array: row0col0, row0col1, ..., row1col0, ...
+        // Fill cells row by row, 3 concurrent per batch to balance speed vs rate limit
         for (var r = 0; r < rowCount; r++) {
+          var rowPromises = [];
           for (var c = 0; c < colCount; c++) {
             var cellIdx = r * colCount + c;
             if (cellIdx < cellIds.length && td.rows[r] && td.rows[r][c] !== undefined) {
               var cellContent = td.rows[r][c];
               if (cellContent || cellContent === "") {
-                var cellElements = parseInlineElements(cellContent);
-                try {
-                  await client.docx.v1.documentBlockChildren.create({
-                    path: { document_id: documentId, block_id: cellIds[cellIdx] },
-                    data: { children: [{ block_type: 2, text: { elements: cellElements } }] },
-                    params: { document_revision_id: -1 }
-                  });
-                } catch (e) {
-                  // Skip cell on error, continue with others
-                }
+                rowPromises.push({ cellId: cellIds[cellIdx], elements: parseInlineElements(cellContent) });
               }
             }
+          }
+          // Fire row cells concurrently (typically 2-5 cols, within rate limit)
+          if (rowPromises.length > 0) {
+            await delay(API_DELAY);
+            await Promise.all(rowPromises.map(function(job) {
+              return client.docx.v1.documentBlockChildren.create({
+                path: { document_id: documentId, block_id: job.cellId },
+                data: { children: [{ block_type: 2, text: { elements: job.elements } }] },
+                params: { document_revision_id: -1 }
+              }).catch(function() {});
+            }));
+            callCount += rowPromises.length;
           }
         }
       }
@@ -5770,7 +5777,6 @@ async function batchCreateBlocks(client, documentId, blocks, batchSize) {
       pending.push(blocks[i]);
     }
   }
-  // Flush remaining regular blocks
   await flushPending();
 }
 
