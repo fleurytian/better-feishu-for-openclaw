@@ -295,6 +295,22 @@ message(path='{"action": "react", "messageId": "om_xxx", ...}')
 // 第6步：发送链接给用户
 ```
 
+**给已有字段追加选项（不要新建字段！）：**
+
+```json
+// 先用 listBitableTables 获取 fieldId
+{ "action": "listBitableTables", "appToken": "XXX" }
+// 返回每个字段的 fieldId
+
+// 给已有 select/multi_select 字段追加选项（自动合并，不会覆盖已有选项）
+{ "action": "updateBitableField", "appToken": "XXX", "tableId": "tblXXX", "fieldId": "fldXXX", "addOptions": ["新选项A", "新选项B"] }
+
+// 重命名字段
+{ "action": "updateBitableField", "appToken": "XXX", "tableId": "tblXXX", "fieldId": "fldXXX", "fieldName": "新名称" }
+```
+
+**重要：** 当需要给单选/多选字段新增选项时，用 `updateBitableField` + `addOptions`，**不要用 `addBitableField` 新建同名字段**，否则会产生重复列。
+
 **其他操作：**
 
 ```json
