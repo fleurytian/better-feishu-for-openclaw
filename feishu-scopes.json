@@ -86,6 +86,8 @@
       "sheets:spreadsheet:create",
       "sheets:spreadsheet:read",
       "sheets:spreadsheet:write_only",
+      "bitable:app",
+      "bitable:app:readonly",
       "space:document.event:read",
       "space:document:create",
       "space:document:shortcut",

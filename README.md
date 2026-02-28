@@ -28,8 +28,10 @@
 - **发送图片和文件**：通过附件形式发送本地图片、文档等文件
 - **消息操作**：Pin 消息
 - **群聊管理**：查询群成员、群信息
-- **文档操作**：创建、读取、追加文档内容，管理文档权限
+- **文档操作**：创建、读取、追加文档内容（支持图片插入），管理文档权限
 - **表格操作**：创建、读取、写入电子表格
+- **多维表格**：创建多维表格、管理字段、CRUD 记录（自动清理默认空数据和字段）
+- **话题帖子**：在话题群中发起新话题帖子
 - **附件自动下载**：飞书消息中的图片、附件自动下载并完成读取
 
 ### 联系人记忆
@@ -158,7 +160,9 @@ bash /tmp/better-feishu-for-openclaw/setup.sh --openclaw-dir ~/openclaw
 >       "im:url_preview.update", "im:user_agent:read",
 >       "sheets:spreadsheet.meta:read", "sheets:spreadsheet.meta:write_only",
 >       "sheets:spreadsheet:create", "sheets:spreadsheet:read",
->       "sheets:spreadsheet:write_only", "space:document.event:read",
+>       "sheets:spreadsheet:write_only",
+>       "bitable:app", "bitable:app:readonly",
+>       "space:document.event:read",
 >       "space:document:create", "space:document:shortcut"
 >     ],
 >     "user": ["docx:document:create"]
@@ -457,6 +461,19 @@ systemctl --user restart openclaw-gateway
 ---
 
 ## Changelog
+
+### 2026-02-28 (v2)
+
+**多维表格、话题帖子、文档图片**
+
+- **新增多维表格 (Bitable) 全生命周期** — `createBitable`（自动清理默认空记录和默认字段）、`addBitableField`（支持 9 种字段类型）、`listBitableTables`（含字段 schema）、`listBitableRecords`/`createBitableRecord`/`updateBitableRecord`/`deleteBitableRecord`
+- **新增话题帖子** — `createTopicPost`：在话题群中发起新话题帖子（与 `replyInThread` 回复讨论串不同）
+- **文档支持图片插入** — `appendDocument` 现在识别 `![alt](src)` markdown 图片语法，自动上传本地文件或远程 URL 到飞书文档，上传失败 fallback 为文字链接
+- **表格写入可靠性提升** — 单元格逐个顺序写入（替换并发 Promise.all），避免内容错位/丢失
+- **表格 separator 检测修复** — 放宽分隔行检测逻辑，兼容更多 markdown 表格格式
+- **新增 `bitable:app` 权限声明** — feishu-scopes.json 和安装指引中补充多维表格所需权限
+- **SKILL.md 更新** — 新增多维表格完整工作流、话题帖子文档、图片插入说明
+- **templates/TOOLS.md 更新** — 新增 action 注册到 target 规则表
 
 ### 2026-02-28
 

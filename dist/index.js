@@ -6346,13 +6346,14 @@ async function createFeishuBitable(cfg, name, folderToken) {
   var result = await client.bitable.v1.app.create({ data: data });
   var app = result?.data?.app;
   if (!app || !app.app_token) throw new Error("Failed to create bitable: " + JSON.stringify(result));
-  // Clean up default empty records
+  // Clean up default empty records and non-primary default fields
   try {
     var tables = await client.bitable.v1.appTable.list({
       path: { app_token: app.app_token }, params: { page_size: 10 }
     });
     for (var ti = 0; ti < (tables?.data?.items || []).length; ti++) {
       var tid = tables.data.items[ti].table_id;
+      // Delete default empty records
       var recs = await client.bitable.v1.appTableRecord.list({
         path: { app_token: app.app_token, table_id: tid }, params: { page_size: 100 }
       });
@@ -6363,6 +6364,24 @@ async function createFeishuBitable(cfg, name, folderToken) {
           data: { records: ids }
         });
       }
+      // Delete non-primary default fields (单选=3, 日期=5, 附件=17; primary 文本=1 cannot be deleted)
+      try {
+        var fields = await client.bitable.v1.appTableField.list({
+          path: { app_token: app.app_token, table_id: tid }, params: { page_size: 100 }
+        });
+        var defaultNonPrimary = [3, 5, 17]; // select, date, attachment
+        for (var fi = 0; fi < (fields?.data?.items || []).length; fi++) {
+          var f = fields.data.items[fi];
+          if (f.is_primary) continue;
+          if (defaultNonPrimary.indexOf(f.type) >= 0) {
+            try {
+              await client.bitable.v1.appTableField.delete({
+                path: { app_token: app.app_token, table_id: tid, field_id: f.field_id }
+              });
+            } catch(_) {}
+          }
+        }
+      } catch(_) {}
     }
   } catch(_) { /* best effort */ }
   return { appToken: app.app_token, name: app.name, url: app.url, revision: app.revision };

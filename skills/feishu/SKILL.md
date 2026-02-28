@@ -2,7 +2,7 @@
 name: feishu
 description: >
   飞书/Lark 消息渠道工具集。通过 message 工具调用飞书 API，支持表情回应、消息操作、
-  群聊查询、文档/表格创建与编辑、云空间搜索与上传。
+  群聊查询、文档/表格创建与编辑（含图片插入）、多维表格、话题帖子、云空间搜索与上传。
 metadata: {"openclaw":{"emoji":"\U0001f4ce"}}
 ---
 
@@ -148,6 +148,26 @@ message(path='{"action": "react", "messageId": "om_xxx", ...}')
 
 **限制：话题内不能发送附件（图片/文件）。** 如需发送附件，请直接发到群聊主界面。
 
+## 话题帖子 (Topic Post)
+
+在**话题群**（chat_mode 为 thread 的群聊）中发起新的话题帖子。
+
+```json
+// 发起话题帖子（支持 post 富文本格式）
+{ "action": "createTopicPost", "chatId": "oc_xxx", "content": "# 标题\n帖子正文内容" }
+
+// 纯文本话题帖子
+{ "action": "createTopicPost", "chatId": "oc_xxx", "content": "帖子内容", "msgType": "text" }
+```
+
+**返回值：** `{ ok: true, messageId: "om_xxx", threadId: "omt_xxx" }`
+
+**与 replyInThread 的区别：**
+- `createTopicPost` — 在话题群中发起**新话题**（相当于论坛里发新帖）
+- `replyInThread` — 在已有消息下创建/回复讨论串
+
+**注意：** `createTopicPost` 只适用于话题群（chat_mode = "thread"），普通群请用 `send`。
+
 ## 群聊查询
 
 ```json
@@ -169,6 +189,8 @@ message(path='{"action": "react", "messageId": "om_xxx", ...}')
 - **表格链接没有 `?sheet=` 参数时，sheetId 可以省略或传 `"Sheet1"`**
 
 **⚠️ 重要：创建文档后必须开权限，否则用户打不开！**
+
+**appendDocument 支持图片插入：** 在 markdown 内容中使用 `![描述](路径或URL)` 语法即可插入图片。支持本地路径和 HTTP(S) URL，图片会自动上传到飞书。上传失败时会 fallback 为文字链接。
 
 **完整工作流（创建 → 分批写入 → 开权限 → 发链接）：**
 
@@ -214,6 +236,56 @@ message(path='{"action": "react", "messageId": "om_xxx", ...}')
 // 写入（values 是二维数组）
 { "action": "writeSpreadsheet", "spreadsheetToken": "shtcnXXX", "sheetId": "Sheet1", "range": "A1", "values": [["姓名","分数"],["张三",95]] }
 ```
+
+## 多维表格 (Bitable)
+
+**⚠️ 从飞书链接提取 token 的方法：**
+- 多维表格：`https://xxx.feishu.cn/base/ABC123def` → appToken = `ABC123def`
+
+**完整工作流（创建 → 加字段 → 写数据 → 开权限 → 发链接）：**
+
+```json
+// 第1步：创建多维表格（返回 appToken，自动清理默认空记录和默认字段）
+{ "action": "createBitable", "name": "表格名" }
+// 可选：指定云空间文件夹
+{ "action": "createBitable", "name": "表格名", "folderToken": "fldcnXXX" }
+// 返回: { "appToken": "XXX", "name": "表格名", "url": "https://xxx.feishu.cn/base/XXX" }
+
+// 第2步：查看表结构（获取 tableId 和现有字段）
+{ "action": "listBitableTables", "appToken": "XXX" }
+// 返回每个 table 的 tableId、name 和 fields（含 fieldId、name、type）
+
+// 第3步：按需添加字段
+{ "action": "addBitableField", "appToken": "XXX", "tableId": "tblXXX", "fieldName": "书名", "fieldType": "text" }
+{ "action": "addBitableField", "appToken": "XXX", "tableId": "tblXXX", "fieldName": "评分", "fieldType": "number" }
+// fieldType 可选: text(1), number(2), select(3), multi_select(4), date(5), checkbox(7), person(11), url(15), attachment(17)
+
+// 第4步：写入数据（fields 是字段名到值的映射）
+{ "action": "createBitableRecord", "appToken": "XXX", "tableId": "tblXXX", "fields": {"书名": "三体", "评分": 9.5} }
+
+// 第5步：给用户开权限
+{ "action": "manageDocPermission", "docToken": "XXX", "docType": "bitable", "action": "add", "memberId": "ou_xxx", "perm": "view" }
+
+// 第6步：发送链接给用户
+```
+
+**其他操作：**
+
+```json
+// 查询记录（支持 filter 筛选）
+{ "action": "listBitableRecords", "appToken": "XXX", "tableId": "tblXXX" }
+{ "action": "listBitableRecords", "appToken": "XXX", "tableId": "tblXXX", "filter": "CurrentValue.[评分] > 8" }
+
+// 更新记录
+{ "action": "updateBitableRecord", "appToken": "XXX", "tableId": "tblXXX", "recordId": "recXXX", "fields": {"评分": 10} }
+
+// 删除记录
+{ "action": "deleteBitableRecord", "appToken": "XXX", "tableId": "tblXXX", "recordId": "recXXX" }
+```
+
+**常见错误：**
+- 创建表后不加字段就写数据 → 字段名不匹配报错。先用 `listBitableTables` 查看现有字段名
+- 忘记开权限 → 用户打不开。多维表格开权限时 `docType` 要传 `"bitable"`
 
 ## 云空间
 

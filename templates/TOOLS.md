@@ -12,7 +12,8 @@
 **不要传 target 的 action（框架已 patch 不再报错，但仍建议不传）：**
 - `readDocument`, `appendDocument`, `createDocument`, `manageDocPermission`
 - `readSpreadsheet`, `writeSpreadsheet`, `createSpreadsheet`
-- `listBitableTables`, `listBitableRecords`, `createBitableRecord`, `updateBitableRecord`, `deleteBitableRecord`
+- `createBitable`, `addBitableField`, `listBitableTables`, `listBitableRecords`, `createBitableRecord`, `updateBitableRecord`, `deleteBitableRecord`
+- `createTopicPost`
 - `getWikiNode`, `listWikiNodes`, `listWikiSpaces`
 - `searchDrive`, `uploadFile`, `createFolder`
 - `translateText`, `ocrImage`, `speechToText`
@@ -47,6 +48,7 @@ message(action="readSpreadsheet", spreadsheetToken="<token>", sheetId="Sheet1", 
 - 代码块：` ```python ... ``` `（支持语言高亮）
 - 分隔线：--- 或 ___
 - 表格：标准 markdown 表格语法
+- **图片：`![描述](路径或URL)`** — 支持本地路径和 HTTP(S) URL，自动上传到飞书
 
 ### 飞书文件分享规则（必读！反复犯错的地方）
 
