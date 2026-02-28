@@ -1,6 +1,6 @@
 {
   "name": "@openclaw-china/feishu",
-  "version": "0.1.10",
+  "version": "2.0.0",
   "type": "module",
   "description": "Moltbot Feishu/Lark channel plugin",
   "license": "MIT",
