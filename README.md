@@ -77,7 +77,7 @@
 
 ---
 
-## 第二步：获取插件 + 备份 + 安装（Agent 直接执行）
+## 第二步：获取插件 + 一键安装（Agent 直接执行）
 
 ```bash
 # 1. Clone 插件仓库
@@ -85,23 +85,17 @@ cd /tmp
 rm -rf better-feishu-for-openclaw
 git clone https://github.com/fleurytian/better-feishu-for-openclaw.git
 
-# 2. 检查并备份现有插件
-if [ -d ~/.openclaw/extensions/feishu ]; then
-  BACKUP_TIME=$(date +%Y%m%d_%H%M%S)
-  mv ~/.openclaw/extensions/feishu ~/.openclaw/extensions/feishu.bak.$BACKUP_TIME
-  echo "已备份到 ~/.openclaw/extensions/feishu.bak.$BACKUP_TIME"
-fi
-
-# 3. 安装新插件
-mkdir -p ~/.openclaw/extensions/feishu/dist
-mkdir -p ~/.openclaw/extensions/feishu/skills/feishu
-cp /tmp/better-feishu-for-openclaw/dist/index.js ~/.openclaw/extensions/feishu/dist/
-cp /tmp/better-feishu-for-openclaw/openclaw.plugin.json ~/.openclaw/extensions/feishu/
-cp /tmp/better-feishu-for-openclaw/package.json ~/.openclaw/extensions/feishu/
-cp /tmp/better-feishu-for-openclaw/skills/feishu/SKILL.md ~/.openclaw/extensions/feishu/skills/feishu/
-
-echo "插件文件安装完成"
+# 2. 一键安装（备份旧插件 + 安装文件 + 打补丁 + 注入 workspace 模板）
+bash /tmp/better-feishu-for-openclaw/setup.sh --openclaw-dir ~/openclaw
 ```
+
+**setup.sh 会自动完成：**
+1. 备份现有飞书插件（如有）
+2. 安装插件文件到 `~/.openclaw/extensions/feishu/`
+3. 给 OpenClaw 核心打运行时补丁（修复 target 处理 + 注入飞书交互规则）
+4. 将飞书相关模板注入到 workspace 的 SOUL.md、TOOLS.md、AGENTS.md、USER.md
+
+*模板注入是幂等的 — 重复运行 setup.sh 只会更新已有内容，不会重复添加。*
 
 ---
 
@@ -225,23 +219,13 @@ echo "插件文件安装完成"
 
 读取并更新 `~/.openclaw/openclaw.json`。
 
-**2. 配置 workspace 模板（如果用户需要）**
-
-将模板内容合并到用户的 workspace 文件：
+**2. workspace 模板已在第二步由 setup.sh 自动注入。** 如需手动重新注入：
 
 ```bash
-# 读取模板
-cat /tmp/better-feishu-for-openclaw/templates/SOUL.md
-cat /tmp/better-feishu-for-openclaw/templates/AGENTS.md
-cat /tmp/better-feishu-for-openclaw/templates/TOOLS.md
-cat /tmp/better-feishu-for-openclaw/templates/USER.md
+python3 /tmp/better-feishu-for-openclaw/scripts/inject-templates.py \
+    --workspace-dir ~/.openclaw/workspace \
+    --templates-dir /tmp/better-feishu-for-openclaw/templates
 ```
-
-将模板内容追加或合并到：
-- `~/.openclaw/workspace/SOUL.md`
-- `~/.openclaw/workspace/AGENTS.md`
-- `~/.openclaw/workspace/TOOLS.md`
-- `~/.openclaw/workspace/USER.md`
 
 **3. 重启 Gateway**
 
@@ -416,7 +400,10 @@ systemctl --user restart openclaw-gateway
   - `TOOLS.md` - 工具备忘模板（飞书 action 速查表）
   - `USER.md` - 联系人与群聊模板（user_id 记录、群聊分类）
 
-**模板使用方式：** 将 `templates/` 中的内容合并到用户的 `~/.openclaw/workspace/` 对应文件中。
+- `scripts/inject-templates.py` - 幂等模板注入脚本
+- `setup.sh` - 一键安装脚本（安装+补丁+模板注入）
+
+**模板使用方式：** `setup.sh` 自动注入。模板内容用 `<!-- [better-feishu] -->` markers 包裹，支持幂等更新。
 
 **关于 USER.md 群聊分类：**
 - 记录群聊时标注「工作群」或「朋友群」
@@ -427,7 +414,7 @@ systemctl --user restart openclaw-gateway
 
 ## 升级指南
 
-如果已经安装了旧版本，按以下步骤升级：
+如果已经安装了旧版本，直接重新运行 setup.sh：
 
 ```bash
 # 1. 拉取最新版本
@@ -435,7 +422,18 @@ cd /tmp
 rm -rf better-feishu-for-openclaw
 git clone https://github.com/fleurytian/better-feishu-for-openclaw.git
 
-# 2. 备份当前版本
+# 2. 一键升级（备份 + 安装 + 打补丁 + 更新模板）
+bash /tmp/better-feishu-for-openclaw/setup.sh --openclaw-dir ~/openclaw
+
+# 3. 重启 gateway
+systemctl --user restart openclaw-gateway
+```
+
+<details>
+<summary>手动升级（如果不想用 setup.sh）</summary>
+
+```bash
+# 备份当前版本
 BACKUP_TIME=$(date +%Y%m%d_%H%M%S)
 cp ~/.openclaw/extensions/feishu/dist/index.js ~/.openclaw/extensions/feishu/dist/index.js.bak.$BACKUP_TIME
 
@@ -448,15 +446,27 @@ cp /tmp/better-feishu-for-openclaw/skills/feishu/SKILL.md ~/.openclaw/extensions
 systemctl --user restart openclaw-gateway
 ```
 
-**升级后检查清单：**
+**手动升级后检查清单：**
 - [ ] `openclaw.json` 中 feishu channel 是否有 `allowFrom: ["*"]` 和 `groupAllowFrom: ["*"]`（v2.26+ 必需）
 - [ ] 是否需要添加 `observeMode: "full"`（推荐，零成本旁听）
-- [ ] 运行时 patch（patch-action-spec.py、patch-channel-target.py）是否需要重新应用
-- [ ] workspace 模板（templates/）是否有新内容需要合并到 SOUL.md、TOOLS.md 等
+- [ ] 运行时 patch 是否需要重新应用
+- [ ] workspace 模板是否有新内容需要合并
+```
+</details>
 
 ---
 
 ## Changelog
+
+### 2026-02-28
+
+**一键安装 (setup.sh)**
+
+- **新增 `setup.sh`** — 一键完成：备份旧插件 → 安装文件 → 打补丁 → 注入 workspace 模板
+- **新增 `scripts/inject-templates.py`** — 幂等模板注入脚本，用 `<!-- [better-feishu] -->` markers 标记，支持重复运行更新
+- **更新 workspace 模板** — 对齐蘑菇实际 workspace：完整 emoji 表情清单（13 场景）、action target 规则、旁听模式配置、文件分享规则、文档工作流
+- **更新 patches** — `patch-channel-target.py` 和 `patch-feishu-messaging.py` 支持 `--openclaw-dir` 参数
+- **升级指南简化** — 升级只需 `git clone` + `bash setup.sh`
 
 ### 2026-02-27
 

@@ -1,8 +1,22 @@
 #!/usr/bin/env python3
-"""Inject feishu interaction rules into buildMessagingSection in dist."""
-import glob, sys, os
+"""Inject feishu interaction rules into buildMessagingSection in dist.
 
-dist_dir = os.path.expanduser("~/openclaw/dist")
+Run after every openclaw upgrade:
+    python3 patch-feishu-messaging.py [--openclaw-dir ~/openclaw]
+"""
+import argparse
+import glob
+import os
+import sys
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--openclaw-dir", default=None,
+                    help="Path to openclaw installation (default: ~/openclaw)")
+args = parser.parse_args()
+
+openclaw_dir = args.openclaw_dir or os.path.expanduser("~/openclaw")
+dist_dir = os.path.join(openclaw_dir, "dist")
+
 # Find the pi-embedded file that contains buildMessagingSection
 targets = []
 for f in glob.glob(os.path.join(dist_dir, "pi-embedded-*.js")):
@@ -57,4 +71,3 @@ for target in targets:
     with open(target, 'w') as fh:
         fh.write(content)
     print(f"PATCHED {target}")
-
