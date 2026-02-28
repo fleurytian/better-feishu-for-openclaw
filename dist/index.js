@@ -4907,8 +4907,9 @@ async function handleFeishuMessage(params) {
       logger.info("[full-observe] no buffered messages since last reply");
     }
   } else if (isGroup && !ctx.mentionedBot && ctx._passiveObserve) {
-    // 自主旁听模式（原有逻辑）
-    ctx.content = "[旁听，保持旁听不回复则输出NO_REPLY] " + ctx.content;
+    // 自主旁听模式 — 附带 sender name
+    var senderLabel = ctx.senderName || ctx.senderId || "unknown";
+    ctx.content = "[旁听 sender=" + senderLabel + "，保持旁听不回复则输出NO_REPLY] " + ctx.content;
   }
   if (!isFeishuRuntimeInitialized()) {
     logger.warn("runtime not initialized, skipping dispatch");
@@ -5593,6 +5594,12 @@ function markdownToFeishuBlocks(text) {
       blocks.push({ block_type: 22, divider: {} });
       continue;
     }
+    // Image: ![alt](src)
+    var imgMatch = line.trim().match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    if (imgMatch) {
+      blocks.push({ block_type: 27, _image: { alt: imgMatch[1], src: imgMatch[2].trim() } });
+      continue;
+    }
     // Table: starts with | ... |
     if (/^\|.+\|/.test(line.trim())) {
       var tableRows = [];
@@ -5600,7 +5607,8 @@ function markdownToFeishuBlocks(text) {
       while (i < lines.length && /^\|.+\|/.test(lines[i].trim())) {
         var rowLine = lines[i].trim();
         // Check if this is a separator line like |---|---|
-        if (/^\|[\s:|-]+\|$/.test(rowLine)) {
+        var sepCells = rowLine.split("|").slice(1, -1);
+        if (sepCells.length > 0 && sepCells.every(function(sc) { return /^[\s:-]*$/.test(sc); })) {
           hasHeader = tableRows.length > 0;
           i++;
           continue;
@@ -5759,19 +5767,39 @@ async function batchCreateBlocks(client, documentId, blocks, batchSize) {
               }
             }
           }
-          // Fire row cells concurrently (typically 2-5 cols, within rate limit)
-          if (rowPromises.length > 0) {
-            await delay(API_DELAY);
-            await Promise.all(rowPromises.map(function(job) {
-              return client.docx.v1.documentBlockChildren.create({
+          // Fill cells sequentially to preserve ordering
+          for (var j = 0; j < rowPromises.length; j++) {
+            var job = rowPromises[j];
+            try {
+              await delay(API_DELAY);
+              await client.docx.v1.documentBlockChildren.create({
                 path: { document_id: documentId, block_id: job.cellId },
                 data: { children: [{ block_type: 2, text: { elements: job.elements } }] },
                 params: { document_revision_id: -1 }
-              }).catch(function() {});
-            }));
-            callCount += rowPromises.length;
+              });
+            } catch (cellErr) {
+              console.error("[feishu-docx] cell write failed r=" + r + " c=" + j + ":", cellErr?.message || cellErr);
+            }
+            callCount++;
           }
         }
+      }
+    } else if (blocks[i]._image) {
+      await flushPending();
+      var img = blocks[i]._image;
+      try {
+        var fileToken = await uploadDocxImage(client, documentId, img.src);
+        await throttledCreate(
+          { document_id: documentId, block_id: documentId },
+          [{ block_type: 27, image: { token: fileToken } }]
+        );
+      } catch (imgErr) {
+        console.error("[feishu-docx] image upload failed, inserting link fallback:", imgErr?.message || imgErr);
+        var fallbackText = img.alt ? "[图片: " + img.alt + "](" + img.src + ")" : "[图片](" + img.src + ")";
+        pending.push({
+          block_type: 2,
+          text: { elements: [{ text_run: { content: fallbackText, text_element_style: { link: { url: img.src } } } }] }
+        });
       }
     } else {
       pending.push(blocks[i]);
@@ -5799,6 +5827,45 @@ async function createFeishuDocument(cfg, title, content, folderToken) {
   }
   var docUrl = "https://feishu.cn/docx/" + documentId;
   return { documentId: documentId, title: title || "", url: docUrl };
+}
+
+async function uploadDocxImage(client, documentId, source) {
+  var fs2 = await import("node:fs");
+  var path2 = await import("node:path");
+  var os2 = await import("node:os");
+  var tmpFile = null;
+  var filePath;
+  try {
+    if (/^https?:\/\//i.test(source)) {
+      // Download URL to temp file
+      var resp = await fetch(source);
+      if (!resp.ok) throw new Error("Failed to fetch image: " + resp.status + " " + source);
+      var buf = Buffer.from(await resp.arrayBuffer());
+      var ext = path2.extname(new URL(source).pathname) || ".png";
+      tmpFile = path2.join(os2.tmpdir(), "feishu_docx_img_" + Date.now() + ext);
+      fs2.writeFileSync(tmpFile, buf);
+      filePath = tmpFile;
+    } else {
+      filePath = source;
+    }
+    var fileName = path2.basename(filePath);
+    var fileSize = fs2.statSync(filePath).size;
+    var stream = fs2.createReadStream(filePath);
+    var result = await client.drive.v1.media.uploadAll({
+      data: {
+        file_name: fileName,
+        parent_type: "docx_image",
+        parent_node: documentId,
+        size: fileSize,
+        file: stream
+      }
+    });
+    var fileToken = result?.file_token || result?.data?.file_token;
+    if (!fileToken) throw new Error("upload returned no file_token: " + JSON.stringify(result));
+    return fileToken;
+  } finally {
+    if (tmpFile) { try { fs2.unlinkSync(tmpFile); } catch(_) {} }
+  }
 }
 
 async function appendFeishuDocument(cfg, documentId, content) {
