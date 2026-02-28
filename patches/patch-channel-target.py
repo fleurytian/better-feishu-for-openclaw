@@ -6,11 +6,18 @@ Two issues in OpenClaw framework:
 2. applyTargetToParams() throws for unknown actions when target is provided
 
 Run after every openclaw upgrade:
-    python3 ~/openclaw/patch-channel-target.py
+    python3 patch-channel-target.py [--openclaw-dir ~/openclaw]
 """
-import glob, re
+import glob, re, os, sys
 
-files = glob.glob("/home/gulufamily/openclaw/dist/*.js")
+dist_dir = os.path.expanduser("~/openclaw/dist")
+for arg in sys.argv[1:]:
+    if arg.startswith("--openclaw-dir="):
+        dist_dir = os.path.join(arg.split("=", 1)[1], "dist")
+    elif arg == "--openclaw-dir" and sys.argv.index(arg) + 1 < len(sys.argv):
+        dist_dir = os.path.join(sys.argv[sys.argv.index(arg) + 1], "dist")
+
+files = glob.glob(os.path.join(dist_dir, "*.js"))
 total = 0
 
 for f in files:
