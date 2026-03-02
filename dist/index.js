@@ -4879,6 +4879,11 @@ async function handleFeishuMessage(params) {
     }
   }
   // --- end 开头@转换 ---
+  // --- 禁言检查 ---
+  if (isGroup && channelCfg?.groups?.[ctx.chatId]?.muted) {
+    logger.debug("[muted] ignoring message in muted group " + ctx.chatId);
+    return;
+  }
   // --- 旁听模式处理 ---
   const observeMode = (isGroup && channelCfg?.groups?.[ctx.chatId]?.observeMode) || channelCfg?.observeMode || "autonomous";
   if (isGroup && observeMode === "full") {

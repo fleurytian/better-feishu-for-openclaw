@@ -91,11 +91,14 @@ message(action="sendAttachment", target="chat:oc_xxx", filePath="/path/to/file.p
     "observeMode": "full",
     "groups": {
       "oc_xxx": { "observeMode": "autonomous" },
-      "oc_yyy": { "observeMode": "full" }
+      "oc_yyy": { "observeMode": "full" },
+      "oc_zzz": { "muted": true }
     }
   }
 }
 ```
 优先级：`groups[chatId].observeMode` > `observeMode`（全局默认）
+
+**禁言模式：** `muted: true` — 完全忽略该群所有消息（包括@），不触发任何处理
 
 <!-- [better-feishu] END -->
