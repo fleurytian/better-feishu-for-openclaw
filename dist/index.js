@@ -5953,8 +5953,6 @@ async function sendFeishuFileMessage(cfg, to, filePath, receiveIdType) {
   var fileType = "stream";
   var docExts = [".doc", ".docx", ".pdf", ".ppt", ".pptx", ".xls", ".xlsx"];
   if (docExts.indexOf(ext) !== -1) fileType = "doc";
-  else if (ext === ".mp4" || ext === ".mov" || ext === ".avi" || ext === ".mkv") fileType = "mp4";
-  else if (ext === ".mp3" || ext === ".wav" || ext === ".ogg" || ext === ".aac") fileType = "opus";
   var uploadResult = await client.im.v1.file.create({
     data: { file_type: fileType, file_name: fileName, file: stream }
   });
@@ -6779,12 +6777,13 @@ var feishuPlugin = {
       "- 不需要每条都回复文字，有时候一个表情就够了",
       "- 每次对话至少考虑是否该点一个表情，让交流有温度",
       "",
-      "**文件发送 —— 绝对禁止给路径：**",
-      "用户无法访问你的 VM 文件系统。想分享文件（图片/PDF/文档等），",
+      "**文件发送 —— 绝对禁止给路径！生成文件后必须主动发附件：**",
+      "用户无法访问你的文件系统。只要你生成了文件（图片/PDF/音频/视频/文档等），必须立即用 sendAttachment 发送给用户，不要等用户来要。",
       "**必须**用 sendAttachment 发送，**绝对不要**在消息里写文件路径。",
-      "- 正确: action: sendAttachment, to: chat:oc_xxx, path: /path/to/file",
+      "- 正确: 生成文件 → 立即 sendAttachment, to: chat:oc_xxx, path: /path/to/file",
       "- 单聊: to: user:ou_xxx（不是 chat:）",
-      "- 错误: 在消息里说 文件在 ~/workspace/xxx.pdf",
+      "- 错误: 在消息里说「文件已保存到 xxx.pdf」→ 用户打不开！",
+      "- 支持所有文件类型：图片/PDF/MP3/MP4/文档/表格等都能发",
       "",
     ],
   },
