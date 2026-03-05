@@ -36,6 +36,7 @@
 - **表格操作**：创建、读取、写入电子表格
 - **多维表格**：创建多维表格、管理字段、CRUD 记录（自动清理默认空数据和字段）
 - **话题帖子**：在话题群中发起新话题帖子
+- **文档评论**：查看、回复和解决飞书文档上的评论，自动注册评论监控
 - **附件自动下载**：飞书消息中的图片、附件自动下载并完成读取
 
 ### 联系人记忆
@@ -465,6 +466,16 @@ systemctl --user restart openclaw-gateway
 ---
 
 ## Changelog
+
+### 2026-03-05
+
+**文档评论支持**
+
+- **新增文档评论操作** — `listDocComments`（获取文档评论列表，支持按解决状态筛选）、`replyDocComment`（回复文档评论）、`resolveDocComment`（解决/恢复评论）
+- **评论监控自动注册** — 查看文档评论或操作文档时，自动注册到 `doc-comment-watch.json` 监控列表
+- **支持多种文件类型** — `fileType` 参数支持 `"docx"`、`"sheet"`、`"bitable"` 等飞书文件类型
+- **SKILL.md 更新** — 新增文档评论完整文档，含参数说明和返回值格式
+- **templates/TOOLS.md 更新** — `listDocComments`、`replyDocComment`、`resolveDocComment` 注册到 target 规则表（不需要 target）
 
 ### 2026-02-28 (v2)
 

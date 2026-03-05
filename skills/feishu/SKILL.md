@@ -352,6 +352,43 @@ message(path='{"action": "react", "messageId": "om_xxx", ...}')
 { "action": "uploadFile", "path": "/tmp/report.pdf", "parentToken": "fldcnXXX" }
 ```
 
+## 文档评论
+
+查看、回复和解决飞书文档上的评论。
+
+```json
+// 获取文档评论列表
+{ "action": "listDocComments", "fileToken": "doxcnXXX" }
+
+// 筛选未解决的评论
+{ "action": "listDocComments", "fileToken": "doxcnXXX", "isSolved": false }
+
+// 指定文件类型（默认 "docx"，可选 "sheet", "bitable" 等）
+{ "action": "listDocComments", "fileToken": "shtcnXXX", "fileType": "sheet" }
+
+// 回复文档评论
+{ "action": "replyDocComment", "fileToken": "doxcnXXX", "commentId": "xxx", "text": "已收到，马上处理" }
+
+// 解决评论（标记为已解决）
+{ "action": "resolveDocComment", "fileToken": "doxcnXXX", "commentId": "xxx" }
+
+// 恢复已解决的评论（标记为未解决）
+{ "action": "resolveDocComment", "fileToken": "doxcnXXX", "commentId": "xxx", "isSolved": false }
+```
+
+**参数说明：**
+- `fileToken` — 文档 token（也接受 `docToken` 或 `token`）
+- `fileType` — 文件类型，默认 `"docx"`，可选 `"sheet"`、`"bitable"` 等
+- `commentId` — 评论 ID，从 `listDocComments` 返回的 `commentId` 字段获取
+- `isSolved` — 布尔值，`listDocComments` 中用于筛选，`resolveDocComment` 中用于解决/恢复
+
+**返回值：**
+- `listDocComments` 返回 `{ comments: [{ commentId, quote, isSolved, replies: [{ replyId, userId, content }] }], total, hasMore }`
+- `replyDocComment` 返回 `{ commentId, replyId, content }`
+- `resolveDocComment` 返回 `{ commentId, isSolved }`
+
+**注意：** 调用 `listDocComments` 或对文档执行其他操作时，文档会自动注册到评论监控列表（`doc-comment-watch.json`）。
+
 ## 消息附件（自动下载）
 
 用户发送图片/文件时，系统会**自动下载**到本地：

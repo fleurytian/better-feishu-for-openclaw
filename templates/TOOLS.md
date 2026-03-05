@@ -19,6 +19,7 @@
 - `translateText`, `ocrImage`, `speechToText`
 - `downloadImage`, `downloadFile`, `downloadAttachment`
 - `createChat`, `listThreadMessages`, `replyInThread`
+- `listDocComments`, `replyDocComment`, `resolveDocComment`
 
 ### 飞书文档和表格读取（必读！）
 

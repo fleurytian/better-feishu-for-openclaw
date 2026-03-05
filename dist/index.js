@@ -4063,8 +4063,6 @@ var FeishuConfigSchema = external_exports.object({
   /** 群聊是否需要 @机器人才响应 */
   requireMention: external_exports.boolean().optional().default(true),
   passiveObserve: external_exports.boolean().optional().default(false),
-  /** 旁听模式: autonomous=自主旁听(实时转发), full=完全旁听(@时拉历史) */
-  observeMode: external_exports.enum(["autonomous", "full"]).optional().default("autonomous"),
   /** 单聊白名单: 允许的用户 ID 列表 */
   allowFrom: external_exports.array(external_exports.string()).optional(),
   /** 群聊白名单: 允许的会话 ID 列表 */
@@ -4138,7 +4136,7 @@ function markdownToPost(text) {
 
     // 解析行内格式 (粗体、斜体、链接、行内代码)
     let pos = 0;
-    const regex = /(\*\*([^*]+)\*\*|__([^_]+)__|(?<![*\w])\*([^*\s][^*]*)\*(?![*\w])|(?<![\w])_([^_\s][^_]*)_(?![\w])|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
+    const regex = /(\*\*([^*]+)\*\*|__([^_]+)__|(?<![*\w])\*([^*\s][^*]*)\*(?![*\w])|(?<![\w])_([^_\s][^_]*)_(?![\w])|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)|<at user_id="([^"]+)">([^<]*)<\/at>)/g;
     let match;
 
     while ((match = regex.exec(remaining)) !== null) {
@@ -4159,6 +4157,9 @@ function markdownToPost(text) {
       } else if (match[7] && match[8]) {
         // [text](url)
         paragraph.push({ tag: "a", text: match[7], href: match[8] });
+      } else if (match[9]) {
+        // <at user_id="xxx">name</at>
+        paragraph.push({ tag: "at", user_id: match[9] });
       }
 
       pos = match.index + match[0].length;
@@ -4244,30 +4245,19 @@ async function sendMessageFeishu(params) {
   }
 }
 async function sendCardFeishu(params) {
-  const { cfg, to, card, receiveIdType = "chat_id", replyToMessageId, replyInThread } = params;
+  const { cfg, to, card, receiveIdType = "chat_id" } = params;
   const client = createFeishuClientFromConfig(cfg);
   try {
-    var result;
-    if (replyToMessageId) {
-      // Reply mode: use message.reply instead of message.create
-      var replyData = { content: JSON.stringify(card), msg_type: "interactive" };
-      if (replyInThread) replyData.reply_in_thread = true;
-      result = await client.im.v1.message.reply({
-        path: { message_id: replyToMessageId },
-        data: replyData
-      });
-    } else {
-      result = await client.im.v1.message.create({
-        params: {
-          receive_id_type: receiveIdType
-        },
-        data: {
-          receive_id: to,
-          msg_type: "interactive",
-          content: JSON.stringify(card)
-        }
-      });
-    }
+    const result = await client.im.v1.message.create({
+      params: {
+        receive_id_type: receiveIdType
+      },
+      data: {
+        receive_id: to,
+        msg_type: "interactive",
+        content: JSON.stringify(card)
+      }
+    });
     const messageId = result?.data?.message_id ?? "";
     return {
       messageId,
@@ -4291,9 +4281,9 @@ function buildMarkdownCard(text) {
   };
 }
 async function sendMarkdownCardFeishu(params) {
-  const { cfg, to, text, receiveIdType = "chat_id", replyToMessageId, replyInThread } = params;
+  const { cfg, to, text, receiveIdType = "chat_id" } = params;
   const card = buildMarkdownCard(text);
-  return sendCardFeishu({ cfg, to, card, receiveIdType, replyToMessageId, replyInThread });
+  return sendCardFeishu({ cfg, to, card, receiveIdType });
 }
 
 // src/runtime.ts
@@ -4493,25 +4483,6 @@ createLogger("feishu");
 
 // --- Patched: user name lookup with cache ---
 var feishuUserNameCache = /* @__PURE__ */ new Map();
-
-// --- 完全旁听模式：群消息 buffer ---
-// key = chatId, value = Array<{sender, senderName, body, timestamp, messageId, msgType}>
-var groupMessageBuffer = /* @__PURE__ */ new Map();
-var GROUP_BUFFER_LIMIT = 50;
-
-function bufferGroupMessage(chatId, entry) {
-  var buf = groupMessageBuffer.get(chatId) || [];
-  buf.push(entry);
-  while (buf.length > GROUP_BUFFER_LIMIT) buf.shift();
-  groupMessageBuffer.set(chatId, buf);
-}
-
-function flushGroupBuffer(chatId) {
-  var buf = groupMessageBuffer.get(chatId) || [];
-  groupMessageBuffer.set(chatId, []);
-  return buf;
-}
-// --- end buffer ---
 async function fetchFeishuUserName(cfg, openId) {
   if (!openId) return "";
   if (feishuUserNameCache.has(openId)) return feishuUserNameCache.get(openId);
@@ -4879,53 +4850,9 @@ async function handleFeishuMessage(params) {
     }
   }
   // --- end 开头@转换 ---
-  // --- 禁言检查 ---
-  if (isGroup && channelCfg?.groups?.[ctx.chatId]?.muted) {
-    logger.debug("[muted] ignoring message in muted group " + ctx.chatId);
-    return;
-  }
-  // --- 旁听模式处理 ---
-  const observeMode = (isGroup && channelCfg?.groups?.[ctx.chatId]?.observeMode) || channelCfg?.observeMode || "autonomous";
-  if (isGroup && observeMode === "full") {
-    if (!ctx.mentionedBot) {
-      // 完全旁听模式：非@消息不 dispatch，存入内存 buffer，不触发 LLM
-      var senderLabel = ctx.senderName || ctx.senderId || "unknown";
-      var now = new Date();
-      var bjTime = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit" }).format(now);
-      bufferGroupMessage(ctx.chatId, {
-        sender: ctx.senderId,
-        senderName: senderLabel,
-        body: ctx.content,
-        timestamp: bjTime,
-        messageId: ctx.messageId,
-        msgType: ctx.contentType
-      });
-      logger.debug("[full-observe] buffered message from " + senderLabel + " (buffer size=" + (groupMessageBuffer.get(ctx.chatId) || []).length + ")");
-      return; // 不 dispatch，不触发 LLM
-    }
-    // 被@了，从内存 buffer 读取积累的历史消息
-    var buffered = flushGroupBuffer(ctx.chatId);
-    if (buffered.length > 0) {
-      var historyLines = buffered.map(function(m) {
-        return "[" + m.timestamp + " " + m.senderName + "] " + (m.body || "").substring(0, 500);
-      }).join("\n");
-      var histHeader = "[以下是上次回复后的群聊消息，共" + buffered.length + "条]\n";
-      var histFooter = "\n[历史结束]\n";
-      var histInstructions = "[阅读提示]\n" +
-        "1. 注意分辨历史消息的对象：哪些是别人之间的对话，哪些是大家共同参与的话题，哪些跟你直接相关，按需选择性回应\n" +
-        "2. 历史中的图片（[图片 image_key=xxx messageId=xxx]）和文件（[文件 file_key=xxx messageId=xxx]）可以按需用 message(action=\"downloadImage\") 或 message(action=\"downloadFile\") 下载查看\n" +
-        "3. 历史中提到的飞书文档/表格链接，用飞书 skill 的 readDocument/readSpreadsheet 读取，不要用 browser\n" +
-        "4. 历史中的附件同样可以用 message(action=\"downloadAttachment\") 按需下载\n" +
-        "[/阅读提示]\n";
-      ctx.content = histHeader + historyLines + histFooter + histInstructions + "[以下是本次@你的消息]\n" + ctx.content;
-      logger.info("[full-observe] injected " + buffered.length + " buffered messages as context");
-    } else {
-      logger.info("[full-observe] no buffered messages since last reply");
-    }
-  } else if (isGroup && !ctx.mentionedBot && ctx._passiveObserve) {
-    // 自主旁听模式 — 附带 sender name
-    var senderLabel = ctx.senderName || ctx.senderId || "unknown";
-    ctx.content = "[旁听 sender=" + senderLabel + "，保持旁听不回复则输出NO_REPLY] " + ctx.content;
+  // --- 旁听前缀 ---
+  if (isGroup && !ctx.mentionedBot && ctx._passiveObserve) {
+    ctx.content = "[旁听，保持旁听不回复则输出NO_REPLY] " + ctx.content;
   }
   if (!isFeishuRuntimeInitialized()) {
     logger.warn("runtime not initialized, skipping dispatch");
@@ -5059,58 +4986,44 @@ async function handleFeishuMessage(params) {
 
         if (ctx.threadId) {
           // 话题内回复
-          logger.debug("Thread reply: threadId=" + ctx.threadId + " rootId=" + ctx.rootId + " messageId=" + ctx.messageId);
-          var threadSent = false;
-          if (ctx.rootId) {
-            // Has rootId → reply within existing thread using message.reply
-            if (useCard) {
+          if (useCard) {
+            // 超过2000字 → 用卡片回复话题
+            await sendMarkdownCardFeishu({
+              cfg: channelCfg,
+              to: ctx.chatId,
+              text: chunk,
+              receiveIdType: "chat_id",
+              replyToMessageId: ctx.rootId,
+              replyInThread: true
+            });
+          } else {
+            // ≤2000字 → 用 post 富文本回复话题，失败则 fallback 纯文本
+            try {
+              const threadClient = createFeishuClientFromConfig(channelCfg);
+              const threadPost = markdownToPost(chunk);
+              await threadClient.im.v1.message.reply({
+                path: { message_id: ctx.rootId },
+                data: {
+                  content: JSON.stringify(threadPost),
+                  msg_type: "post",
+                  reply_in_thread: true
+                }
+              });
+            } catch (threadErr) {
               try {
-                await sendMarkdownCardFeishu({ cfg: channelCfg, to: ctx.chatId, text: chunk, receiveIdType: "chat_id", replyToMessageId: ctx.rootId, replyInThread: true });
-                threadSent = true;
-              } catch (e) { logger.error("Thread card reply failed: " + String(e)); }
-            } else {
-              try {
-                const tc = createFeishuClientFromConfig(channelCfg);
-                await tc.im.v1.message.reply({ path: { message_id: ctx.rootId }, data: { content: JSON.stringify(markdownToPost(chunk)), msg_type: "post", reply_in_thread: true } });
-                threadSent = true;
-              } catch (e) {
-                logger.error("Thread post reply failed: " + String(e));
-                try {
-                  const tc2 = createFeishuClientFromConfig(channelCfg);
-                  await tc2.im.v1.message.reply({ path: { message_id: ctx.rootId }, data: { content: JSON.stringify({text: chunk}), msg_type: "text", reply_in_thread: true } });
-                  threadSent = true;
-                } catch (e2) { logger.error("Thread text reply failed: " + String(e2)); }
+                const threadClient2 = createFeishuClientFromConfig(channelCfg);
+                await threadClient2.im.v1.message.reply({
+                  path: { message_id: ctx.rootId },
+                  data: {
+                    content: JSON.stringify({text: chunk}),
+                    msg_type: "text",
+                    reply_in_thread: true
+                  }
+                });
+              } catch (threadErr2) {
+                logger.error("Thread reply failed (both post and text): " + String(threadErr2));
               }
             }
-          }
-          if (!threadSent) {
-            // No rootId (topic group — message IS the thread root) or reply failed
-            // Use message.reply on the messageId itself with reply_in_thread to stay in the thread
-            logger.debug("Trying message.reply on messageId=" + ctx.messageId + " with reply_in_thread=true");
-            if (useCard) {
-              try {
-                await sendMarkdownCardFeishu({ cfg: channelCfg, to: ctx.chatId, text: chunk, receiveIdType: "chat_id", replyToMessageId: ctx.messageId, replyInThread: true });
-                threadSent = true;
-              } catch (e) { logger.error("Card reply to messageId failed: " + String(e)); }
-            }
-            if (!threadSent) {
-              try {
-                const tc3 = createFeishuClientFromConfig(channelCfg);
-                await tc3.im.v1.message.reply({ path: { message_id: ctx.messageId }, data: { content: JSON.stringify(markdownToPost(chunk)), msg_type: "post", reply_in_thread: true } });
-                threadSent = true;
-              } catch (e) {
-                logger.error("Post reply to messageId failed: " + String(e));
-                try {
-                  const tc4 = createFeishuClientFromConfig(channelCfg);
-                  await tc4.im.v1.message.reply({ path: { message_id: ctx.messageId }, data: { content: JSON.stringify({text: chunk}), msg_type: "text", reply_in_thread: true } });
-                  threadSent = true;
-                } catch (e2) { logger.error("Text reply to messageId failed: " + String(e2)); }
-              }
-            }
-          }
-          if (!threadSent) {
-            // Topic group: do NOT fall back to message.create (that creates a new topic)
-            logger.warn("All thread replies failed, NOT creating new topic to avoid spam");
           }
         } else if (useCard) {
           // 超过2000字 → 发卡片
@@ -5522,320 +5435,57 @@ async function deleteFeishuReaction(cfg, messageId, reactionId) {
 }
 
 // --- Patched: document support ---
-
-function parseInlineElements(text) {
-  var elements = [];
-  var pos = 0;
-  var regex = /(\*\*([^*]+)\*\*|__([^_]+)__|~~([^~]+)~~|(?<![*\w])\*([^*\s][^*]*)\*(?![*\w])|(?<![\w])_([^_\s][^_]*)_(?![\w])|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
-  var match;
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > pos) {
-      elements.push({ text_run: { content: text.slice(pos, match.index) } });
-    }
-    if (match[2] || match[3]) {
-      // **bold** or __bold__
-      elements.push({ text_run: { content: match[2] || match[3], text_element_style: { bold: true } } });
-    } else if (match[4]) {
-      // ~~strikethrough~~
-      elements.push({ text_run: { content: match[4], text_element_style: { strikethrough: true } } });
-    } else if (match[5] || match[6]) {
-      // *italic* or _italic_
-      elements.push({ text_run: { content: match[5] || match[6], text_element_style: { italic: true } } });
-    } else if (match[7]) {
-      // `code`
-      elements.push({ text_run: { content: match[7], text_element_style: { inline_code: true } } });
-    } else if (match[8] && match[9]) {
-      // [text](url)
-      elements.push({ text_run: { content: match[8], text_element_style: { link: { url: match[9] } } } });
-    }
-    pos = match.index + match[0].length;
-  }
-  if (pos < text.length) {
-    elements.push({ text_run: { content: text.slice(pos) } });
-  }
-  if (elements.length === 0) {
-    elements.push({ text_run: { content: text } });
-  }
-  return elements;
-}
-
 function markdownToFeishuBlocks(text) {
   var lines = text.split("\n");
   var blocks = [];
-  var inCodeBlock = false;
-  var codeLines = [];
-  var codeLang = 1;
-  var langMap = {
-    "plaintext": 1, "abap": 2, "ada": 3, "apache": 4, "apex": 5,
-    "assembly": 6, "bash": 7, "csharp": 8, "c#": 8, "c++": 9, "cpp": 9,
-    "c": 10, "cobol": 11, "css": 12, "coffeescript": 13, "d": 14,
-    "dart": 15, "delphi": 16, "django": 17, "dockerfile": 18, "elixir": 19,
-    "erlang": 20, "fortran": 21, "foxpro": 22, "go": 23, "groovy": 24,
-    "html": 25, "htmlbars": 26, "http": 27, "haskell": 28, "json": 29,
-    "java": 30, "javascript": 31, "js": 31, "julia": 32, "kotlin": 33,
-    "latex": 34, "lisp": 35, "logo": 36, "lua": 37, "matlab": 38,
-    "makefile": 39, "markdown": 40, "md": 40, "nginx": 41,
-    "objectivec": 42, "objective-c": 42, "openedgeabl": 43, "php": 44,
-    "perl": 45, "postscript": 46, "powershell": 47, "prolog": 48,
-    "protobuf": 49, "python": 50, "py": 50, "r": 51, "rpg": 52,
-    "ruby": 53, "rb": 53, "rust": 54, "rs": 54, "sas": 55, "scss": 56,
-    "sql": 57, "scala": 58, "scheme": 59, "scratch": 60, "shell": 61,
-    "sh": 61, "swift": 62, "thrift": 63, "typescript": 64, "ts": 64,
-    "vbscript": 65, "visual basic": 66, "vb": 66, "xml": 67, "yaml": 68,
-    "yml": 68
-  };
   for (var i = 0; i < lines.length; i++) {
     var line = lines[i];
-    // Code block fence
-    if (line.trim().startsWith("```")) {
-      if (!inCodeBlock) {
-        inCodeBlock = true;
-        codeLines = [];
-        var langStr = line.trim().slice(3).trim().toLowerCase();
-        codeLang = langMap[langStr] || 1;
-      } else {
-        inCodeBlock = false;
-        blocks.push({
-          block_type: 14,
-          code: {
-            style: { language: codeLang, wrap: false },
-            elements: [{ text_run: { content: codeLines.join("\n") } }]
-          }
-        });
-        codeLines = [];
-        codeLang = 1;
-      }
+    if (line.trim() === "") continue;
+    if (line.trim() === "---" || line.trim() === "***") {
+      blocks.push({ block_type: 22 }); // divider
       continue;
     }
-    if (inCodeBlock) {
-      codeLines.push(line);
-      continue;
-    }
-    // Empty line → paragraph separator
-    if (line.trim() === "") {
-      blocks.push({
-        block_type: 2,
-        text: { elements: [{ text_run: { content: "" } }] }
-      });
-      continue;
-    }
-    // Divider
-    if (/^(---+|\*\*\*+|___+)\s*$/.test(line.trim())) {
-      blocks.push({ block_type: 22, divider: {} });
-      continue;
-    }
-    // Image: ![alt](src)
-    var imgMatch = line.trim().match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
-    if (imgMatch) {
-      blocks.push({ block_type: 27, _image: { alt: imgMatch[1], src: imgMatch[2].trim() } });
-      continue;
-    }
-    // Table: starts with | ... |
-    if (/^\|.+\|/.test(line.trim())) {
-      var tableRows = [];
-      var hasHeader = false;
-      while (i < lines.length && /^\|.+\|/.test(lines[i].trim())) {
-        var rowLine = lines[i].trim();
-        // Check if this is a separator line like |---|---|
-        var sepCells = rowLine.split("|").slice(1, -1);
-        if (sepCells.length > 0 && sepCells.every(function(sc) { return /^[\s:-]*$/.test(sc); })) {
-          hasHeader = tableRows.length > 0;
-          i++;
-          continue;
-        }
-        var cells = rowLine.split("|").slice(1, -1).map(function(c) { return c.trim(); });
-        tableRows.push(cells);
-        i++;
-      }
-      i--; // back up since the for loop will i++
-      if (tableRows.length > 0) {
-        var colCount = Math.max.apply(null, tableRows.map(function(r) { return r.length; }));
-        // Normalize rows to same column count
-        tableRows = tableRows.map(function(r) {
-          while (r.length < colCount) r.push("");
-          return r;
-        });
-        blocks.push({
-          block_type: 31,
-          _table: { rows: tableRows, colCount: colCount, hasHeader: hasHeader }
-        });
-      }
-      continue;
-    }
-    // Heading
     var headingMatch = line.match(/^(#{1,9})\s+(.+)/);
     if (headingMatch) {
-      var level = headingMatch[1].length;
-      var blockType = 2 + level;
+      var level = headingMatch[1].length; // 1-9
+      var blockType = 2 + level; // heading1=3, heading2=4, ...
       var hBlock = { block_type: blockType };
       var hKey = "heading" + level;
-      hBlock[hKey] = { elements: parseInlineElements(headingMatch[2]) };
+      hBlock[hKey] = { elements: [{ text_run: { content: headingMatch[2] } }] };
       blocks.push(hBlock);
       continue;
     }
-    // Todo (check before bullet to avoid being consumed)
-    var todoMatch = line.match(/^[-*]\s+\[([ xX])\]\s+(.*)/);
-    if (todoMatch) {
-      var done = todoMatch[1].toLowerCase() === "x";
-      blocks.push({
-        block_type: 17,
-        todo: {
-          style: { done: done },
-          elements: parseInlineElements(todoMatch[2])
-        }
-      });
-      continue;
-    }
-    // Bullet
     var bulletMatch = line.match(/^[-*]\s+(.+)/);
     if (bulletMatch) {
       blocks.push({
         block_type: 12,
-        bullet: { elements: parseInlineElements(bulletMatch[1]) }
+        bullet: { elements: [{ text_run: { content: bulletMatch[1] } }] }
       });
       continue;
     }
-    // Ordered list
     var orderedMatch = line.match(/^\d+\.\s+(.+)/);
     if (orderedMatch) {
       blocks.push({
         block_type: 13,
-        ordered: { elements: parseInlineElements(orderedMatch[1]) }
+        ordered: { elements: [{ text_run: { content: orderedMatch[1] } }] }
       });
       continue;
     }
-    // Quote
-    var quoteMatch = line.match(/^>\s+(.*)/);
+    var quoteMatch = line.match(/^>\s+(.+)/);
     if (quoteMatch) {
       blocks.push({
         block_type: 15,
-        quote: { elements: parseInlineElements(quoteMatch[1]) }
+        quote: { elements: [{ text_run: { content: quoteMatch[1] } }] }
       });
       continue;
     }
     // Default: text block
     blocks.push({
       block_type: 2,
-      text: { elements: parseInlineElements(line) }
-    });
-  }
-  // Flush unclosed code block
-  if (inCodeBlock) {
-    blocks.push({
-      block_type: 14,
-      code: {
-        style: { language: codeLang, wrap: false },
-        elements: [{ text_run: { content: codeLines.join("\n") } }]
-      }
+      text: { elements: [{ text_run: { content: line } }] }
     });
   }
   return blocks;
-}
-
-async function batchCreateBlocks(client, documentId, blocks, batchSize) {
-  batchSize = batchSize || 50;
-  var API_DELAY = 200; // ms between API calls to avoid 429
-  var delay = function(ms) { return new Promise(function(r) { setTimeout(r, ms); }); };
-  var callCount = 0;
-  async function throttledCreate(path, data) {
-    if (callCount > 0) await delay(API_DELAY);
-    callCount++;
-    return client.docx.v1.documentBlockChildren.create({
-      path: path,
-      data: { children: data },
-      params: { document_revision_id: -1 }
-    });
-  }
-  // Split blocks into segments: regular blocks vs table markers
-  var pending = [];
-  async function flushPending() {
-    if (pending.length === 0) return;
-    for (var off = 0; off < pending.length; off += batchSize) {
-      var chunk = pending.slice(off, off + batchSize);
-      await throttledCreate({ document_id: documentId, block_id: documentId }, chunk);
-    }
-    pending = [];
-  }
-  for (var i = 0; i < blocks.length; i++) {
-    if (blocks[i]._table) {
-      await flushPending();
-      var td = blocks[i]._table;
-      var rowCount = td.rows.length;
-      var colCount = td.colCount;
-      var tableBlock = {
-        block_type: 31,
-        table: {
-          property: {
-            row_size: rowCount,
-            column_size: colCount,
-            header_row: td.hasHeader || false
-          }
-        }
-      };
-      var createResult = await throttledCreate(
-        { document_id: documentId, block_id: documentId }, [tableBlock]
-      );
-      var createdBlocks = createResult?.data?.children || [];
-      var tableData = null;
-      for (var tb = 0; tb < createdBlocks.length; tb++) {
-        if (createdBlocks[tb].block_type === 31 && createdBlocks[tb].table) {
-          tableData = createdBlocks[tb];
-          break;
-        }
-      }
-      if (tableData && tableData.table && tableData.table.cells) {
-        var cellIds = tableData.table.cells;
-        // Fill cells row by row, 3 concurrent per batch to balance speed vs rate limit
-        for (var r = 0; r < rowCount; r++) {
-          var rowPromises = [];
-          for (var c = 0; c < colCount; c++) {
-            var cellIdx = r * colCount + c;
-            if (cellIdx < cellIds.length && td.rows[r] && td.rows[r][c] !== undefined) {
-              var cellContent = td.rows[r][c];
-              if (cellContent || cellContent === "") {
-                rowPromises.push({ cellId: cellIds[cellIdx], elements: parseInlineElements(cellContent) });
-              }
-            }
-          }
-          // Fill cells sequentially to preserve ordering
-          for (var j = 0; j < rowPromises.length; j++) {
-            var job = rowPromises[j];
-            try {
-              await delay(API_DELAY);
-              await client.docx.v1.documentBlockChildren.create({
-                path: { document_id: documentId, block_id: job.cellId },
-                data: { children: [{ block_type: 2, text: { elements: job.elements } }] },
-                params: { document_revision_id: -1 }
-              });
-            } catch (cellErr) {
-              console.error("[feishu-docx] cell write failed r=" + r + " c=" + j + ":", cellErr?.message || cellErr);
-            }
-            callCount++;
-          }
-        }
-      }
-    } else if (blocks[i]._image) {
-      await flushPending();
-      var img = blocks[i]._image;
-      try {
-        var fileToken = await uploadDocxImage(client, documentId, img.src);
-        await throttledCreate(
-          { document_id: documentId, block_id: documentId },
-          [{ block_type: 27, image: { token: fileToken } }]
-        );
-      } catch (imgErr) {
-        console.error("[feishu-docx] image upload failed, inserting link fallback:", imgErr?.message || imgErr);
-        var fallbackText = img.alt ? "[图片: " + img.alt + "](" + img.src + ")" : "[图片](" + img.src + ")";
-        pending.push({
-          block_type: 2,
-          text: { elements: [{ text_run: { content: fallbackText, text_element_style: { link: { url: img.src } } } }] }
-        });
-      }
-    } else {
-      pending.push(blocks[i]);
-    }
-  }
-  await flushPending();
 }
 
 async function createFeishuDocument(cfg, title, content, folderToken) {
@@ -5852,50 +5502,15 @@ async function createFeishuDocument(cfg, title, content, folderToken) {
   if (content && content.trim()) {
     var blocks = markdownToFeishuBlocks(content);
     if (blocks.length > 0) {
-      await batchCreateBlocks(client, documentId, blocks);
+      await client.docx.v1.documentBlockChildren.create({
+        path: { document_id: documentId, block_id: documentId },
+        data: { children: blocks },
+        params: { document_revision_id: -1 }
+      });
     }
   }
   var docUrl = "https://feishu.cn/docx/" + documentId;
   return { documentId: documentId, title: title || "", url: docUrl };
-}
-
-async function uploadDocxImage(client, documentId, source) {
-  var fs2 = await import("node:fs");
-  var path2 = await import("node:path");
-  var os2 = await import("node:os");
-  var tmpFile = null;
-  var filePath;
-  try {
-    if (/^https?:\/\//i.test(source)) {
-      // Download URL to temp file
-      var resp = await fetch(source);
-      if (!resp.ok) throw new Error("Failed to fetch image: " + resp.status + " " + source);
-      var buf = Buffer.from(await resp.arrayBuffer());
-      var ext = path2.extname(new URL(source).pathname) || ".png";
-      tmpFile = path2.join(os2.tmpdir(), "feishu_docx_img_" + Date.now() + ext);
-      fs2.writeFileSync(tmpFile, buf);
-      filePath = tmpFile;
-    } else {
-      filePath = source;
-    }
-    var fileName = path2.basename(filePath);
-    var fileSize = fs2.statSync(filePath).size;
-    var stream = fs2.createReadStream(filePath);
-    var result = await client.drive.v1.media.uploadAll({
-      data: {
-        file_name: fileName,
-        parent_type: "docx_image",
-        parent_node: documentId,
-        size: fileSize,
-        file: stream
-      }
-    });
-    var fileToken = result?.file_token || result?.data?.file_token;
-    if (!fileToken) throw new Error("upload returned no file_token: " + JSON.stringify(result));
-    return fileToken;
-  } finally {
-    if (tmpFile) { try { fs2.unlinkSync(tmpFile); } catch(_) {} }
-  }
 }
 
 async function appendFeishuDocument(cfg, documentId, content) {
@@ -5907,11 +5522,22 @@ async function appendFeishuDocument(cfg, documentId, content) {
   if (blocks.length === 0) {
     return { documentId: documentId, blocksAdded: 0 };
   }
-  await batchCreateBlocks(client, documentId, blocks);
+  // Batch blocks to avoid 400 error (Feishu API limit ~50 blocks per call)
+  var BATCH_SIZE = 50;
+  var totalChildren = 0;
+  for (var batchStart = 0; batchStart < blocks.length; batchStart += BATCH_SIZE) {
+    var batch = blocks.slice(batchStart, batchStart + BATCH_SIZE);
+    var result = await client.docx.v1.documentBlockChildren.create({
+      path: { document_id: documentId, block_id: documentId },
+      data: { children: batch },
+      params: { document_revision_id: -1 }
+    });
+    totalChildren += result?.data?.children?.length ?? 0;
+  }
   return {
     documentId: documentId,
     blocksAdded: blocks.length,
-    children: blocks.length
+    children: totalChildren
   };
 }
 // --- Patched: sendAttachment support ---
@@ -5958,6 +5584,8 @@ async function sendFeishuFileMessage(cfg, to, filePath, receiveIdType) {
   var fileType = "stream";
   var docExts = [".doc", ".docx", ".pdf", ".ppt", ".pptx", ".xls", ".xlsx"];
   if (docExts.indexOf(ext) !== -1) fileType = "doc";
+  else if (ext === ".mp4" || ext === ".mov" || ext === ".avi" || ext === ".mkv") fileType = "mp4";
+  else if (ext === ".mp3" || ext === ".wav" || ext === ".ogg" || ext === ".aac") fileType = "opus";
   var uploadResult = await client.im.v1.file.create({
     data: { file_type: fileType, file_name: fileName, file: stream }
   });
@@ -6155,54 +5783,13 @@ async function getFeishuChatMembers(cfg, chatId) {
 async function listFeishuMessages(cfg, chatId, pageSize) {
   var client = createFeishuClientFromConfig(cfg);
   var result = await client.im.v1.message.list({
-    params: { container_id_type: "chat", container_id: chatId, page_size: pageSize || 20, sort_type: "ByCreateTimeDesc" }
+    params: { container_id_type: "chat", container_id: chatId, page_size: pageSize || 20 }
   });
   var items = result?.data?.items ?? [];
   return { chatId: chatId, messages: items.map(function(m) {
     var body = "";
-    try {
-      var parsed = JSON.parse(m.body?.content || "{}");
-      if (m.msg_type === "text") {
-        body = parsed.text || "";
-      } else if (m.msg_type === "image") {
-        body = "[图片 image_key=" + (parsed.image_key || "unknown") + " messageId=" + m.message_id + "]";
-      } else if (m.msg_type === "file") {
-        body = "[文件: " + (parsed.file_name || "未知") + " file_key=" + (parsed.file_key || "unknown") + " messageId=" + m.message_id + "]";
-      } else if (m.msg_type === "audio") {
-        body = "[语音 file_key=" + (parsed.file_key || "unknown") + " messageId=" + m.message_id + "]";
-      } else if (m.msg_type === "media") {
-        body = "[视频 file_key=" + (parsed.file_key || "unknown") + " messageId=" + m.message_id + "]";
-      } else if (m.msg_type === "sticker") {
-        body = "[表情]";
-      } else if (m.msg_type === "post") {
-        // 富文本：提取文本内容
-        var postText = "";
-        try {
-          var lang = parsed.zh_cn || parsed.en_us || parsed[Object.keys(parsed)[0]] || {};
-          var title = lang.title || "";
-          var contentArr = lang.content || [];
-          var texts = [];
-          if (title) texts.push(title);
-          contentArr.forEach(function(para) {
-            if (Array.isArray(para)) para.forEach(function(el) {
-              if (el.tag === "text" && el.text) texts.push(el.text);
-              else if (el.tag === "a" && el.text) texts.push(el.text);
-              else if (el.tag === "img") texts.push("[图片]");
-              else if (el.tag === "media") texts.push("[媒体]");
-            });
-          });
-          postText = texts.join(" ");
-        } catch(pe) {}
-        body = postText || "[富文本消息]";
-      } else if (m.msg_type === "interactive") {
-        body = "[卡片消息]";
-      } else {
-        body = parsed.text || m.body?.content || "[" + (m.msg_type || "未知类型") + "]";
-      }
-    } catch(e) { body = m.body?.content || "[消息]"; }
-    var mentions = [];
-    try { if (m.mentions && Array.isArray(m.mentions)) mentions = m.mentions.map(function(mt) { return { key: mt.key, id: mt.id, name: mt.name }; }); } catch(e) {}
-    return { messageId: m.message_id, msgType: m.msg_type, senderId: m.sender?.id, senderType: m.sender?.sender_type, createTime: m.create_time, body: body, threadId: m.thread_id, mentions: mentions };
+    try { body = JSON.parse(m.body?.content || "{}").text || m.body?.content || ""; } catch(e) { body = m.body?.content || ""; }
+    return { messageId: m.message_id, msgType: m.msg_type, senderId: m.sender?.id, senderType: m.sender?.sender_type, createTime: m.create_time, body: body, threadId: m.thread_id };
   }), total: items.length };
 }
 
@@ -6218,30 +5805,6 @@ async function listThreadMessagesFeishu(cfg, threadId, pageSize) {
     try { body = JSON.parse(m.body?.content || "{}").text || m.body?.content || ""; } catch(e) { body = m.body?.content || ""; }
     return { messageId: m.message_id, msgType: m.msg_type, senderId: m.sender?.id, senderType: m.sender?.sender_type, createTime: m.create_time, body: body };
   }), total: items.length };
-}
-
-// IM: Create a new topic post in a topic/thread group
-async function createTopicPostFeishu(cfg, chatId, content, msgType, receiveIdType) {
-  var client = createFeishuClientFromConfig(cfg);
-  msgType = msgType || "post";
-  var contentObj;
-  if (msgType === "text") {
-    contentObj = { text: content };
-  } else {
-    // Default: send as post (rich text) built from markdown
-    contentObj = markdownToPost(content);
-  }
-  var result = await client.im.v1.message.create({
-    params: { receive_id_type: receiveIdType || "chat_id" },
-    data: {
-      receive_id: chatId,
-      msg_type: msgType,
-      content: JSON.stringify(contentObj),
-      reply_in_thread: true
-    }
-  });
-  var msg = result?.data;
-  return { ok: true, messageId: msg?.message_id, threadId: msg?.thread_id };
 }
 
 // IM: Reply in thread (话题形式回复)
@@ -6365,78 +5928,7 @@ async function writeFeishuSpreadsheet(cfg, spreadsheetToken, sheetId, range, val
   return { ok: true, spreadsheetToken: spreadsheetToken, updatedRange: rangeStr };
 }
 
-// Bitable: Create a new bitable app
-async function createFeishuBitable(cfg, name, folderToken, firstFieldName) {
-  var client = createFeishuClientFromConfig(cfg);
-  var data = {};
-  if (name) data.name = name;
-  if (folderToken) data.folder_token = folderToken;
-  var result = await client.bitable.v1.app.create({ data: data });
-  var app = result?.data?.app;
-  if (!app || !app.app_token) throw new Error("Failed to create bitable: " + JSON.stringify(result));
-  // Clean up default empty records and non-primary default fields
-  try {
-    var tables = await client.bitable.v1.appTable.list({
-      path: { app_token: app.app_token }, params: { page_size: 10 }
-    });
-    for (var ti = 0; ti < (tables?.data?.items || []).length; ti++) {
-      var tid = tables.data.items[ti].table_id;
-      // Delete default empty records
-      var recs = await client.bitable.v1.appTableRecord.list({
-        path: { app_token: app.app_token, table_id: tid }, params: { page_size: 100 }
-      });
-      var ids = (recs?.data?.items || []).map(function(r) { return r.record_id; });
-      if (ids.length > 0) {
-        await client.bitable.v1.appTableRecord.batchDelete({
-          path: { app_token: app.app_token, table_id: tid },
-          data: { records: ids }
-        });
-      }
-      // Delete non-primary default fields AND rename primary field
-      try {
-        var fields = await client.bitable.v1.appTableField.list({
-          path: { app_token: app.app_token, table_id: tid }, params: { page_size: 100 }
-        });
-        var defaultNonPrimary = [3, 5, 17]; // select, date, attachment
-        for (var fi = 0; fi < (fields?.data?.items || []).length; fi++) {
-          var f = fields.data.items[fi];
-          if (f.is_primary) {
-            // Rename primary field if firstFieldName is provided
-            if (firstFieldName && f.field_name !== firstFieldName) {
-              try {
-                await client.bitable.v1.appTableField.update({
-                  path: { app_token: app.app_token, table_id: tid, field_id: f.field_id },
-                  data: { field_name: firstFieldName }
-                });
-              } catch(_) {}
-            }
-            continue;
-          }
-          if (defaultNonPrimary.indexOf(f.type) >= 0) {
-            try {
-              await client.bitable.v1.appTableField.delete({
-                path: { app_token: app.app_token, table_id: tid, field_id: f.field_id }
-              });
-            } catch(_) {}
-          }
-        }
-      } catch(_) {}
-    }
-  } catch(_) { /* best effort */ }
-  return { appToken: app.app_token, name: app.name, url: app.url, revision: app.revision };
-}
-
-// Bitable: Update (rename) a bitable app
-async function updateFeishuBitable(cfg, appToken, name) {
-  var client = createFeishuClientFromConfig(cfg);
-  var result = await client.bitable.v1.app.update({
-    path: { app_token: appToken },
-    data: { name: name }
-  });
-  return { ok: true, appToken: appToken, name: name };
-}
-
-// Bitable: List tables (with fields per table)
+// Bitable: List tables
 async function listFeishuBitableTables(cfg, appToken) {
   var client = createFeishuClientFromConfig(cfg);
   var result = await client.bitable.v1.appTable.list({
@@ -6444,109 +5936,7 @@ async function listFeishuBitableTables(cfg, appToken) {
     params: { page_size: 100 }
   });
   var items = result?.data?.items ?? [];
-  var tables = [];
-  for (var t = 0; t < items.length; t++) {
-    var table = { tableId: items[t].table_id, name: items[t].name, revision: items[t].revision };
-    try {
-      var fr = await client.bitable.v1.appTableField.list({
-        path: { app_token: appToken, table_id: items[t].table_id },
-        params: { page_size: 100 }
-      });
-      table.fields = (fr?.data?.items ?? []).map(function(f) { return { fieldId: f.field_id, name: f.field_name, type: f.type }; });
-    } catch (_) { table.fields = []; }
-    tables.push(table);
-  }
-  return { appToken: appToken, tables: tables, total: tables.length };
-}
-
-// Bitable: Add a field to a table
-async function addFeishuBitableField(cfg, appToken, tableId, fieldName, fieldType, options) {
-  var client = createFeishuClientFromConfig(cfg);
-  var typeMap = { text: 1, number: 2, select: 3, multi_select: 4, date: 5, checkbox: 7, person: 11, url: 15, attachment: 17 };
-  var typeNum = typeof fieldType === "number" ? fieldType : (typeMap[fieldType] || 1);
-  var data = { field_name: fieldName, type: typeNum };
-  // For select/multi_select, pass options as property.options
-  if (options && Array.isArray(options) && (typeNum === 3 || typeNum === 4)) {
-    data.property = { options: options.map(function(opt, idx) {
-      if (typeof opt === "string") return { name: opt, color: idx };
-      return { name: opt.name, color: typeof opt.color === "number" ? opt.color : idx };
-    })};
-  }
-  var result = await client.bitable.v1.appTableField.create({
-    path: { app_token: appToken, table_id: tableId },
-    data: data
-  });
-  var field = result?.data?.field;
-  return { ok: true, fieldId: field?.field_id, name: field?.field_name, type: field?.type };
-}
-
-// Bitable: Update a field (rename, add options to select/multi_select)
-async function updateFeishuBitableField(cfg, appToken, tableId, fieldId, updates) {
-  var client = createFeishuClientFromConfig(cfg);
-  // First read current field to get type and existing options
-  var current;
-  try {
-    var fields = await client.bitable.v1.appTableField.list({
-      path: { app_token: appToken, table_id: tableId }, params: { page_size: 100 }
-    });
-    current = (fields?.data?.items || []).find(function(f) { return f.field_id === fieldId; });
-  } catch(_) {}
-  if (!current) throw new Error("Field not found: " + fieldId);
-  var data = { field_name: updates.fieldName || current.field_name, type: current.type };
-  // Merge options for select/multi_select
-  if (updates.addOptions && Array.isArray(updates.addOptions) && (current.type === 3 || current.type === 4)) {
-    var existingOpts = (current.property && current.property.options) || [];
-    var existingNames = {};
-    for (var i = 0; i < existingOpts.length; i++) existingNames[existingOpts[i].name] = true;
-    var merged = existingOpts.slice();
-    var nextColor = existingOpts.length;
-    for (var j = 0; j < updates.addOptions.length; j++) {
-      var opt = updates.addOptions[j];
-      var name = typeof opt === "string" ? opt : opt.name;
-      if (existingNames[name]) continue; // skip duplicates
-      merged.push({ name: name, color: typeof opt === "object" && typeof opt.color === "number" ? opt.color : (nextColor % 10) });
-      nextColor++;
-    }
-    data.property = { options: merged };
-  }
-  var result = await client.bitable.v1.appTableField.update({
-    path: { app_token: appToken, table_id: tableId, field_id: fieldId },
-    data: data
-  });
-  var field = result?.data?.field;
-  var opts = (field && field.property && field.property.options) || [];
-  return { ok: true, fieldId: field?.field_id, name: field?.field_name, type: field?.type, options: opts.map(function(o) { return o.name; }) };
-}
-
-// Bitable: Delete a field from a table (cannot delete primary field)
-async function deleteFeishuBitableField(cfg, appToken, tableId, fieldId) {
-  var client = createFeishuClientFromConfig(cfg);
-  await client.bitable.v1.appTableField.delete({
-    path: { app_token: appToken, table_id: tableId, field_id: fieldId }
-  });
-  return { ok: true, fieldId: fieldId };
-}
-
-// Bitable: Upload a file and return file_token for attachment fields
-async function uploadFeishuBitableFile(cfg, filePath, appToken) {
-  var fs2 = await import("node:fs");
-  var path2 = await import("node:path");
-  var client = createFeishuClientFromConfig(cfg);
-  var fileName = path2.basename(filePath);
-  var fileSize = fs2.statSync(filePath).size;
-  var stream = fs2.createReadStream(filePath);
-  var result = await client.drive.v1.media.uploadAll({
-    data: {
-      file_name: fileName,
-      parent_type: "bitable_file",
-      parent_node: appToken || "",
-      size: fileSize,
-      file: stream
-    }
-  });
-  var fileToken = result?.file_token || result?.data?.file_token;
-  if (!fileToken) throw new Error("upload returned no file_token: " + JSON.stringify(result));
-  return { ok: true, fileToken: fileToken, fileName: fileName };
+  return { appToken: appToken, tables: items.map(function(t) { return { tableId: t.table_id, name: t.name, revision: t.revision }; }), total: items.length };
 }
 
 // Bitable: List records
@@ -6701,6 +6091,109 @@ async function speechToTextFeishu(cfg, speechData, fileId) {
   return { text: result?.data?.recognition_text ?? "" };
 }
 
+// --- Document comment watch auto-register ---
+function registerDocForCommentWatch(fileToken, name) {
+  try {
+    var fs = require("node:fs");
+    var path = require("node:path");
+    var home = process.env.HOME || process.env.USERPROFILE || "/tmp";
+    var watchPath = path.join(home, ".openclaw/workspace/doc-comment-watch.json");
+    var data = { docs: [], seen: {} };
+    try { data = JSON.parse(fs.readFileSync(watchPath, "utf8")); } catch (e) {}
+    if (!Array.isArray(data.docs)) data.docs = [];
+    var existing = data.docs.find(function(d) { return d.fileToken === fileToken; });
+    if (existing) {
+      existing.updatedAt = new Date().toISOString();
+      if (name) existing.name = name;
+    } else {
+      data.docs.push({ fileToken: fileToken, name: name || "", addedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+    }
+    fs.writeFileSync(watchPath, JSON.stringify(data, null, 2));
+  } catch (e) { /* silent */ }
+}
+
+// --- Document comments support ---
+
+// Helper: format comment rich text elements to readable text
+function formatCommentElements(elements) {
+  if (!elements || !Array.isArray(elements)) return "";
+  var parts = [];
+  for (var i = 0; i < elements.length; i++) {
+    var el = elements[i];
+    if (el.type === "text_run" && el.text_run) {
+      parts.push(el.text_run.text || "");
+    } else if (el.type === "docs_link" && el.docs_link) {
+      parts.push("[link:" + (el.docs_link.url || "") + "]");
+    } else if (el.type === "person" && el.person) {
+      parts.push("@" + (el.person.user_id || ""));
+    }
+  }
+  return parts.join("");
+}
+
+// List document comments
+async function listFeishuDocComments(cfg, fileToken, fileType, opts) {
+  var client = createFeishuClientFromConfig(cfg);
+  var params = { file_type: fileType || "docx", page_size: (opts && opts.pageSize) || 50 };
+  if (opts && typeof opts.isSolved === "boolean") {
+    params.is_solved = opts.isSolved;
+  }
+  var result = await client.drive.v1.fileComment.list({
+    path: { file_token: fileToken },
+    params: params
+  });
+  var items = result?.data?.items ?? [];
+  var comments = items.map(function(c) {
+    var replies = (c.reply_list?.replies ?? []).map(function(r) {
+      return {
+        replyId: r.reply_id,
+        userId: r.user_id,
+        content: formatCommentElements(r.content?.elements),
+        createTime: r.create_time,
+        updateTime: r.update_time
+      };
+    });
+    return {
+      commentId: c.comment_id,
+      quote: c.quote,
+      isSolved: c.is_solved,
+      createTime: c.create_time,
+      updateTime: c.update_time,
+      replies: replies
+    };
+  });
+  return { fileToken: fileToken, comments: comments, total: comments.length, hasMore: result?.data?.has_more ?? false };
+}
+
+// Reply to a document comment
+async function replyFeishuDocComment(cfg, fileToken, fileType, commentId, text) {
+  var client = createFeishuClientFromConfig(cfg);
+  var result = await client.request({
+    method: "POST",
+    url: "/open-apis/drive/v1/files/" + fileToken + "/comments/" + commentId + "/replies",
+    params: { file_type: fileType || "docx" },
+    data: {
+      content: {
+        elements: [{ type: "text_run", text_run: { text: text } }]
+      }
+    }
+  });
+  var reply = result?.data?.reply;
+  return { commentId: commentId, replyId: reply?.reply_id, content: text };
+}
+
+// Resolve or unresolve a document comment
+async function resolveFeishuDocComment(cfg, fileToken, fileType, commentId, isSolved) {
+  var client = createFeishuClientFromConfig(cfg);
+  await client.drive.v1.fileComment.patch({
+    path: { file_token: fileToken, comment_id: commentId },
+    params: { file_type: fileType || "docx" },
+    data: { is_solved: isSolved !== false }
+  });
+  return { commentId: commentId, isSolved: isSolved !== false };
+}
+
+// --- End document comments support ---
 // --- End patched extended Feishu tools ---
 // --- End patched document support ---
 // --- End patched reaction support ---
@@ -6714,7 +6207,7 @@ var feishuPlugin = {
     chatTypes: ["direct", "channel"],
     media: false,
     reactions: true,
-    threads: true,
+    threads: false,
     edit: false,
     reply: true,
     polls: false
@@ -6735,36 +6228,25 @@ var feishuPlugin = {
       "- `action: \"recallMessage\"`, `messageId` — 撤回消息",
       "- `action: \"updateMessage\"`, `messageId`, `content` — 编辑消息",
       "- `action: \"listThreadMessages\"`, `threadId`, `pageSize?` — 列出话题消息",
-      "- `action: \"replyInThread\"`, `messageId`, `content`, `msgType?` — 在已有话题内回复",
-      "- `action: \"createTopicPost\"`, `chatId`, `content` — 在话题群/话题形式群里发起一个新话题帖（content 支持 markdown，会自动转 post 富文本）",
+      "- `action: \"replyInThread\"`, `messageId`, `content`, `msgType?` — 在话题内回复",
       "",
       "**群聊查询:**",
       "- `action: \"getChatInfo\"`, `chatId` — 获取群聊详情",
       "- `action: \"getChatMembers\"`, `chatId` — 获取群成员列表",
       "",
-      "**文档:** (推荐两步创建：先 createDocument 只传 title 拿到 documentId，再 appendDocument 传 content)",
-      "- `action: \"createDocument\"`, `title?`, `folderToken?` — 创建空文档，返回 documentId",
-      "- `action: \"appendDocument\"`, `documentId`, `content`(markdown) — 追加内容。支持完整 markdown：**加粗** *斜体* ~~删除线~~ `代码` [链接](url)、# 标题、列表、- [ ] todo、> 引用、```代码块```、--- 分隔线、| 表格 |、![alt](url) 图片",
+      "**文档:**",
+      "- `action: \"createDocument\"`, `title?`, `content?`(markdown), `folderToken?` — 创建文档",
+      "- `action: \"appendDocument\"`, `documentId`, `content`(markdown) — 追加内容",
       "- `action: \"readDocument\"`, `documentId` — 读取文档内容",
       "- `action: \"manageDocPermission\"`, `docToken`, `docType`(\"docx\"/\"sheet\"/\"bitable\"/\"file\", 默认\"docx\"), `permAction`(\"add\"/\"remove\"/\"list\"), `memberId?`, `memberType?`(\"openid\"/\"userid\"/\"chat_id\", 默认\"openid\"), `perm?`(\"view\"/\"edit\") — 权限管理（支持文档、表格、多维表格、文件）",
+      "- `action: \"listDocComments\"`, `fileToken`, `fileType?`(默认\"docx\"), `isSolved?`(bool筛选), `pageSize?`(默认50) — 获取文档评论列表",
+      "- `action: \"replyDocComment\"`, `fileToken`, `commentId`, `text`, `fileType?` — 回复文档评论",
+      "- `action: \"resolveDocComment\"`, `fileToken`, `commentId`, `isSolved?`(默认true), `fileType?` — 解决/恢复评论",
       "",
       "**电子表格:**",
       "- `action: \"createSpreadsheet\"`, `title?`, `folderToken?`",
       "- `action: \"readSpreadsheet\"`, `spreadsheetToken`, `sheetId?`, `range?`",
       "- `action: \"writeSpreadsheet\"`, `spreadsheetToken`, `sheetId`, `range?`, `values`(二维数组)",
-      "",
-      "**多维表格 (Bitable):** 典型流程：createBitable → listBitableTables 看字段 → addBitableField 加自定义列 → createBitableRecord 写数据。给已有 select/multi_select 字段追加选项用 updateBitableField，不要新建字段！",
-      "- `action: \"createBitable\"`, `name`, `folderToken?`, `firstFieldName?`(重命名默认主字段，如\"标题\"\"名称\"等) — 创建新多维表格，返回 appToken 和 url。自动清理默认空记录和默认非主字段（单选/日期/附件），主字段(文本)不可删但可通过 firstFieldName 重命名",
-      "- `action: \"updateBitable\"`, `appToken`, `name` — 重命名多维表格",
-      "- `action: \"listBitableTables\"`, `appToken` — 列出数据表（含每个表的字段名和类型）",
-      "- `action: \"addBitableField\"`, `appToken`, `tableId`, `fieldName`, `fieldType`(\"text\"/\"number\"/\"select\"/\"multi_select\"/\"date\"/\"checkbox\"/\"person\"/\"url\"/\"attachment\" 或数字), `options?`(select/multi_select 的选项，字符串数组如 [\"选项A\",\"选项B\"] 或对象数组如 [{name:\"选项A\",color:0}]) — 添加新字段",
-      "- `action: \"updateBitableField\"`, `appToken`, `tableId`, `fieldId`(从 listBitableTables 获取), `addOptions?`(追加选项), `fieldName?`(重命名) — **修改已有字段**：追加选项或重命名。遇到新选项值用这个，不要新建字段！",
-      "- `action: \"deleteBitableField\"`, `appToken`, `tableId`, `fieldId` — 删除字段（主字段不可删）",
-      "- `action: \"uploadBitableFile\"`, `appToken`(多维表格token), `path`(本地文件路径) — 上传文件到飞书多维表格，返回 file_token。用于附件字段：先 uploadBitableFile 拿 fileToken，再 createBitableRecord 时传 {\"附件字段\": [{\"file_token\": \"xxx\"}]}。appToken 必传！",
-      "- `action: \"listBitableRecords\"`, `appToken`, `tableId`, `filter?`, `pageSize?` — 查询记录。filter 用飞书公式语法如 `CurrentValue.[字段名]=\"值\"`",
-      "- `action: \"createBitableRecord\"`, `appToken`, `tableId`, `fields`(object) — 新增记录。fields 的 key 必须与字段名完全一致。特殊字段格式：人员=[{\"id\":\"ou_xxx\"}]，单选=\"选项名\"，多选=[\"选项A\",\"选项B\"]，日期=毫秒时间戳，checkbox=true/false，附件=[{\"file_token\":\"xxx\"}]",
-      "- `action: \"updateBitableRecord\"`, `appToken`, `tableId`, `recordId`, `fields` — 更新记录（字段格式同上）",
-      "- `action: \"deleteBitableRecord\"`, `appToken`, `tableId`, `recordId` — 删除记录",
       "",
       "**云空间:**",
       "- `action: \"searchDrive\"`, `query`, `fileType?`, `folderToken?`",
@@ -6782,13 +6264,12 @@ var feishuPlugin = {
       "- 不需要每条都回复文字，有时候一个表情就够了",
       "- 每次对话至少考虑是否该点一个表情，让交流有温度",
       "",
-      "**文件发送 —— 绝对禁止给路径！生成文件后必须主动发附件：**",
-      "用户无法访问你的文件系统。只要你生成了文件（图片/PDF/音频/视频/文档等），必须立即用 sendAttachment 发送给用户，不要等用户来要。",
+      "**文件发送 —— 绝对禁止给路径：**",
+      "用户无法访问你的 VM 文件系统。想分享文件（图片/PDF/文档等），",
       "**必须**用 sendAttachment 发送，**绝对不要**在消息里写文件路径。",
-      "- 正确: 生成文件 → 立即 sendAttachment, to: chat:oc_xxx, path: /path/to/file",
+      "- 正确: action: sendAttachment, to: chat:oc_xxx, path: /path/to/file",
       "- 单聊: to: user:ou_xxx（不是 chat:）",
-      "- 错误: 在消息里说「文件已保存到 xxx.pdf」→ 用户打不开！",
-      "- 支持所有文件类型：图片/PDF/MP3/MP4/文档/表格等都能发",
+      "- 错误: 在消息里说 文件在 ~/workspace/xxx.pdf",
       "",
     ],
   },
@@ -6885,9 +6366,9 @@ var feishuPlugin = {
   actions: {
     listActions: ({ cfg }) => {
       if (!cfg.channels?.feishu) return [];
-      return ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "createTopicPost", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "createBitable", "updateBitable", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "addBitableField", "updateBitableField", "deleteBitableField", "uploadBitableFile", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"];
+      return ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment", "listDocComments", "replyDocComment", "resolveDocComment"];
     },
-    supportsAction: ({ action }) => ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "createTopicPost", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "createBitable", "updateBitable", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "addBitableField", "updateBitableField", "deleteBitableField", "uploadBitableFile", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment"].indexOf(action) !== -1,
+    supportsAction: ({ action }) => ["react", "createDocument", "appendDocument", "readDocument", "sendAttachment", "searchDrive", "uploadFile", "createFolder", "getChatInfo", "getChatMembers", "listMessages", "listThreadMessages", "replyInThread", "pinMessage", "unpinMessage", "recallMessage", "updateMessage", "createChat", "addChatMembers", "removeChatMembers", "createSpreadsheet", "readSpreadsheet", "writeSpreadsheet", "listBitableTables", "listBitableRecords", "createBitableRecord", "updateBitableRecord", "deleteBitableRecord", "getWikiNode", "listWikiNodes", "listWikiSpaces", "translateText", "ocrImage", "manageDocPermission", "speechToText", "downloadImage", "downloadFile", "downloadAttachment", "listDocComments", "replyDocComment", "resolveDocComment"].indexOf(action) !== -1,
     handleAction: async ({ action, params, cfg }) => {
       var feishuCfg = cfg.channels?.feishu;
       if (!feishuCfg) {
@@ -6948,6 +6429,7 @@ var feishuPlugin = {
         var content = params.content || params.text || "";
         var folderToken = params.folderToken || params.folder || undefined;
         var result = await createFeishuDocument(feishuCfg, title, content, folderToken);
+        registerDocForCommentWatch(result.documentId, title);
         var _r = { ok: true, documentId: result.documentId, title: result.title, url: result.url };
         return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
       }
@@ -6958,6 +6440,7 @@ var feishuPlugin = {
         }
         var content = params.content || params.text || params.message || "";
         var result = await appendFeishuDocument(feishuCfg, documentId, content);
+        registerDocForCommentWatch(documentId);
         var _r = { ok: true, documentId: result.documentId, blocksAdded: result.blocksAdded };
         return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
       }
@@ -6979,6 +6462,7 @@ var feishuPlugin = {
         var documentId = params.documentId || params.docId;
         if (!documentId) throw new Error("documentId is required");
         var result = await readFeishuDocument(feishuCfg, documentId);
+        registerDocForCommentWatch(documentId);
         var _r = { ok: true, ...result };
         return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
       }
@@ -7031,14 +6515,6 @@ var feishuPlugin = {
         var content = params.content || params.text;
         if (!content) throw new Error("content is required");
         var result = await replyInThreadFeishu(feishuCfg, messageId, content, params.msgType);
-        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
-      }
-      if (action === "createTopicPost") {
-        var chatId = params.chatId;
-        if (!chatId) throw new Error("chatId is required");
-        var content = params.content || params.text;
-        if (!content) throw new Error("content is required");
-        var result = await createTopicPostFeishu(feishuCfg, chatId, content, params.msgType);
         return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
       }
       if (action === "pinMessage") {
@@ -7122,18 +6598,6 @@ var feishuPlugin = {
         return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
       }
       // --- Bitable ---
-      if (action === "createBitable") {
-        if (!params.name) throw new Error("name is required");
-        var result = await createFeishuBitable(feishuCfg, params.name, params.folderToken, params.firstFieldName);
-        var _r = { ok: true, ...result };
-        return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
-      }
-      if (action === "updateBitable") {
-        if (!params.appToken) throw new Error("appToken is required");
-        if (!params.name) throw new Error("name is required");
-        var result = await updateFeishuBitable(feishuCfg, params.appToken, params.name);
-        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
-      }
       if (action === "listBitableTables") {
         if (!params.appToken) throw new Error("appToken is required");
         var result = await listFeishuBitableTables(feishuCfg, params.appToken);
@@ -7167,36 +6631,6 @@ var feishuPlugin = {
         if (!params.tableId) throw new Error("tableId is required");
         if (!params.recordId) throw new Error("recordId is required");
         var result = await deleteFeishuBitableRecord(feishuCfg, params.appToken, params.tableId, params.recordId);
-        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
-      }
-      if (action === "addBitableField") {
-        if (!params.appToken) throw new Error("appToken is required");
-        if (!params.tableId) throw new Error("tableId is required");
-        if (!params.fieldName) throw new Error("fieldName is required");
-        var result = await addFeishuBitableField(feishuCfg, params.appToken, params.tableId, params.fieldName, params.fieldType || "text", params.options);
-        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
-      }
-      if (action === "updateBitableField") {
-        if (!params.appToken) throw new Error("appToken is required");
-        if (!params.tableId) throw new Error("tableId is required");
-        if (!params.fieldId) throw new Error("fieldId is required");
-        var updates = {};
-        if (params.fieldName) updates.fieldName = params.fieldName;
-        if (params.addOptions) updates.addOptions = params.addOptions;
-        var result = await updateFeishuBitableField(feishuCfg, params.appToken, params.tableId, params.fieldId, updates);
-        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
-      }
-      if (action === "deleteBitableField") {
-        if (!params.appToken) throw new Error("appToken is required");
-        if (!params.tableId) throw new Error("tableId is required");
-        if (!params.fieldId) throw new Error("fieldId is required");
-        var result = await deleteFeishuBitableField(feishuCfg, params.appToken, params.tableId, params.fieldId);
-        return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
-      }
-      if (action === "uploadBitableFile") {
-        if (!params.path) throw new Error("path is required (local file path)");
-        if (!params.appToken) throw new Error("appToken is required (bitable app_token)");
-        var result = await uploadFeishuBitableFile(feishuCfg, params.path, params.appToken);
         return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
       }
       // --- Wiki ---
@@ -7251,6 +6685,36 @@ var feishuPlugin = {
         if (!fileKey) throw new Error("fileKey is required");
         var savePath = params.savePath || params.path || "/tmp/feishu-file-" + Date.now();
         var result = await downloadFeishuFile(feishuCfg, fileKey, savePath, params.messageId);
+        var _r = { ok: true, ...result };
+        return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
+      }
+      // --- Document comments ---
+      if (action === "listDocComments") {
+        var fileToken = params.fileToken || params.docToken || params.token;
+        if (!fileToken) throw new Error("fileToken is required");
+        var result = await listFeishuDocComments(feishuCfg, fileToken, params.fileType, { isSolved: params.isSolved, pageSize: params.pageSize });
+        registerDocForCommentWatch(fileToken);
+        var _r = { ok: true, ...result };
+        return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
+      }
+      if (action === "replyDocComment") {
+        var fileToken = params.fileToken || params.docToken || params.token;
+        if (!fileToken) throw new Error("fileToken is required");
+        var commentId = params.commentId;
+        if (!commentId) throw new Error("commentId is required");
+        var text = params.text || params.content || params.message;
+        if (!text) throw new Error("text is required");
+        var result = await replyFeishuDocComment(feishuCfg, fileToken, params.fileType, commentId, text);
+        var _r = { ok: true, ...result };
+        return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
+      }
+      if (action === "resolveDocComment") {
+        var fileToken = params.fileToken || params.docToken || params.token;
+        if (!fileToken) throw new Error("fileToken is required");
+        var commentId = params.commentId;
+        if (!commentId) throw new Error("commentId is required");
+        var isSolved = params.isSolved !== undefined ? params.isSolved : true;
+        var result = await resolveFeishuDocComment(feishuCfg, fileToken, params.fileType, commentId, isSolved);
         var _r = { ok: true, ...result };
         return { content: [{ type: "text", text: JSON.stringify(_r) }], details: _r };
       }
