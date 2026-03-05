@@ -4892,8 +4892,8 @@ async function handleFeishuMessage(params) {
     for (const imgKey of imageKeysToDownload) {
       if (imgKey && ctx.messageId) {
         try {
-          const downloadDir = isGroup ? "/tmp" : process.env.HOME + "/.openclaw/workspace/chatdownload";
-          if (!isGroup) { try { fs.mkdirSync(downloadDir, { recursive: true }); } catch(e) {} }
+          const downloadDir = isGroup ? (process.env.HOME + "/.openclaw/media/inbound") : process.env.HOME + "/.openclaw/workspace/chatdownload";
+          try { fs.mkdirSync(downloadDir, { recursive: true }); } catch(e) {}
           const savePath = downloadDir + "/feishu_auto_" + ctx.messageId + "_" + imgKey + ".png";
           await downloadFeishuImage(channelCfg, imgKey, savePath, ctx.messageId);
           mediaPaths.push(savePath);
@@ -4915,8 +4915,8 @@ async function handleFeishuMessage(params) {
       if (fKey && ctx.messageId) {
         try {
           const ext = fName ? "." + fName.split(".").pop() : "";
-          const downloadDir2 = isGroup ? "/tmp" : process.env.HOME + "/.openclaw/workspace/chatdownload";
-          if (!isGroup) { try { fs.mkdirSync(downloadDir2, { recursive: true }); } catch(e) {} }
+          const downloadDir2 = isGroup ? (process.env.HOME + "/.openclaw/media/inbound") : process.env.HOME + "/.openclaw/workspace/chatdownload";
+          try { fs.mkdirSync(downloadDir2, { recursive: true }); } catch(e) {}
           const savePath = downloadDir2 + "/feishu_auto_" + ctx.messageId + "_" + fKey + ext;
           await downloadFeishuFile(channelCfg, fKey, savePath, ctx.messageId);
           mediaPaths.push(savePath);
