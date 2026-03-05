@@ -4063,6 +4063,8 @@ var FeishuConfigSchema = external_exports.object({
   /** 群聊是否需要 @机器人才响应 */
   requireMention: external_exports.boolean().optional().default(true),
   passiveObserve: external_exports.boolean().optional().default(false),
+  /** 旁听模式: autonomous=自主旁听(实时转发), full=完全旁听(@时拉历史) */
+  observeMode: external_exports.enum(["autonomous", "full"]).optional().default("autonomous"),
   /** 单聊白名单: 允许的用户 ID 列表 */
   allowFrom: external_exports.array(external_exports.string()).optional(),
   /** 群聊白名单: 允许的会话 ID 列表 */
@@ -4245,19 +4247,30 @@ async function sendMessageFeishu(params) {
   }
 }
 async function sendCardFeishu(params) {
-  const { cfg, to, card, receiveIdType = "chat_id" } = params;
+  const { cfg, to, card, receiveIdType = "chat_id", replyToMessageId, replyInThread } = params;
   const client = createFeishuClientFromConfig(cfg);
   try {
-    const result = await client.im.v1.message.create({
-      params: {
-        receive_id_type: receiveIdType
-      },
-      data: {
-        receive_id: to,
-        msg_type: "interactive",
-        content: JSON.stringify(card)
-      }
-    });
+    var result;
+    if (replyToMessageId) {
+      // Reply mode: use message.reply instead of message.create
+      var replyData = { content: JSON.stringify(card), msg_type: "interactive" };
+      if (replyInThread) replyData.reply_in_thread = true;
+      result = await client.im.v1.message.reply({
+        path: { message_id: replyToMessageId },
+        data: replyData
+      });
+    } else {
+      result = await client.im.v1.message.create({
+        params: {
+          receive_id_type: receiveIdType
+        },
+        data: {
+          receive_id: to,
+          msg_type: "interactive",
+          content: JSON.stringify(card)
+        }
+      });
+    }
     const messageId = result?.data?.message_id ?? "";
     return {
       messageId,
@@ -4281,9 +4294,9 @@ function buildMarkdownCard(text) {
   };
 }
 async function sendMarkdownCardFeishu(params) {
-  const { cfg, to, text, receiveIdType = "chat_id" } = params;
+  const { cfg, to, text, receiveIdType = "chat_id", replyToMessageId, replyInThread } = params;
   const card = buildMarkdownCard(text);
-  return sendCardFeishu({ cfg, to, card, receiveIdType });
+  return sendCardFeishu({ cfg, to, card, receiveIdType, replyToMessageId, replyInThread });
 }
 
 // src/runtime.ts
@@ -4483,6 +4496,25 @@ createLogger("feishu");
 
 // --- Patched: user name lookup with cache ---
 var feishuUserNameCache = /* @__PURE__ */ new Map();
+
+// --- 完全旁听模式：群消息 buffer ---
+// key = chatId, value = Array<{sender, senderName, body, timestamp, messageId, msgType}>
+var groupMessageBuffer = /* @__PURE__ */ new Map();
+var GROUP_BUFFER_LIMIT = 50;
+
+function bufferGroupMessage(chatId, entry) {
+  var buf = groupMessageBuffer.get(chatId) || [];
+  buf.push(entry);
+  while (buf.length > GROUP_BUFFER_LIMIT) buf.shift();
+  groupMessageBuffer.set(chatId, buf);
+}
+
+function flushGroupBuffer(chatId) {
+  var buf = groupMessageBuffer.get(chatId) || [];
+  groupMessageBuffer.set(chatId, []);
+  return buf;
+}
+// --- end buffer ---
 async function fetchFeishuUserName(cfg, openId) {
   if (!openId) return "";
   if (feishuUserNameCache.has(openId)) return feishuUserNameCache.get(openId);
@@ -4850,8 +4882,46 @@ async function handleFeishuMessage(params) {
     }
   }
   // --- end 开头@转换 ---
-  // --- 旁听前缀 ---
-  if (isGroup && !ctx.mentionedBot && ctx._passiveObserve) {
+  // --- 旁听模式处理 ---
+  const observeMode = (isGroup && channelCfg?.groups?.[ctx.chatId]?.observeMode) || channelCfg?.observeMode || "autonomous";
+  if (isGroup && observeMode === "full") {
+    if (!ctx.mentionedBot) {
+      // 完全旁听模式：非@消息不 dispatch，存入内存 buffer，不触发 LLM
+      var senderLabel = ctx.senderName || ctx.senderId || "unknown";
+      var now = new Date();
+      var bjTime = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit" }).format(now);
+      bufferGroupMessage(ctx.chatId, {
+        sender: ctx.senderId,
+        senderName: senderLabel,
+        body: ctx.content,
+        timestamp: bjTime,
+        messageId: ctx.messageId,
+        msgType: ctx.contentType
+      });
+      logger.debug("[full-observe] buffered message from " + senderLabel + " (buffer size=" + (groupMessageBuffer.get(ctx.chatId) || []).length + ")");
+      return; // 不 dispatch，不触发 LLM
+    }
+    // 被@了，从内存 buffer 读取积累的历史消息
+    var buffered = flushGroupBuffer(ctx.chatId);
+    if (buffered.length > 0) {
+      var historyLines = buffered.map(function(m) {
+        return "[" + m.timestamp + " " + m.senderName + "] " + (m.body || "").substring(0, 500);
+      }).join("\n");
+      var histHeader = "[以下是上次回复后的群聊消息，共" + buffered.length + "条]\n";
+      var histFooter = "\n[历史结束]\n";
+      var histInstructions = "[阅读提示]\n" +
+        "1. 注意分辨历史消息的对象：哪些是别人之间的对话，哪些是大家共同参与的话题，哪些跟你直接相关，按需选择性回应\n" +
+        "2. 历史中的图片（[图片 image_key=xxx messageId=xxx]）和文件（[文件 file_key=xxx messageId=xxx]）可以按需用 message(action=\"downloadImage\") 或 message(action=\"downloadFile\") 下载查看\n" +
+        "3. 历史中提到的飞书文档/表格链接，用飞书 skill 的 readDocument/readSpreadsheet 读取，不要用 browser\n" +
+        "4. 历史中的附件同样可以用 message(action=\"downloadAttachment\") 按需下载\n" +
+        "[/阅读提示]\n";
+      ctx.content = histHeader + historyLines + histFooter + histInstructions + "[以下是本次@你的消息]\n" + ctx.content;
+      logger.info("[full-observe] injected " + buffered.length + " buffered messages as context");
+    } else {
+      logger.info("[full-observe] no buffered messages since last reply");
+    }
+  } else if (isGroup && !ctx.mentionedBot && ctx._passiveObserve) {
+    // 自主旁听模式（原有逻辑）
     ctx.content = "[旁听，保持旁听不回复则输出NO_REPLY] " + ctx.content;
   }
   if (!isFeishuRuntimeInitialized()) {
@@ -5488,6 +5558,18 @@ function markdownToFeishuBlocks(text) {
   return blocks;
 }
 
+async function batchCreateBlocks(client, documentId, blocks, batchSize) {
+  batchSize = batchSize || 50;
+  for (var offset = 0; offset < blocks.length; offset += batchSize) {
+    var chunk = blocks.slice(offset, offset + batchSize);
+    await client.docx.v1.documentBlockChildren.create({
+      path: { document_id: documentId, block_id: documentId },
+      data: { children: chunk },
+      params: { document_revision_id: -1 }
+    });
+  }
+}
+
 async function createFeishuDocument(cfg, title, content, folderToken) {
   var client = createFeishuClientFromConfig(cfg);
   var createData = {};
@@ -5502,11 +5584,7 @@ async function createFeishuDocument(cfg, title, content, folderToken) {
   if (content && content.trim()) {
     var blocks = markdownToFeishuBlocks(content);
     if (blocks.length > 0) {
-      await client.docx.v1.documentBlockChildren.create({
-        path: { document_id: documentId, block_id: documentId },
-        data: { children: blocks },
-        params: { document_revision_id: -1 }
-      });
+      await batchCreateBlocks(client, documentId, blocks);
     }
   }
   var docUrl = "https://feishu.cn/docx/" + documentId;
