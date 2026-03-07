@@ -4111,8 +4111,30 @@ function createFeishuClientFromConfig(config) {
 function markdownToPost(text) {
   const lines = text.split('\n');
   const content = [];
+  let inCodeBlock = false;
 
   for (const line of lines) {
+    // 检测代码块边界 (```)
+    if (line.trimStart().startsWith('```')) {
+      inCodeBlock = !inCodeBlock;
+      // 代码块标记行本身作为纯文本显示
+      const lang = line.trimStart().slice(3).trim();
+      if (lang && !inCodeBlock) {
+        // 结束标记，跳过
+      } else if (lang) {
+        content.push([{ tag: "text", text: `[${lang}]` }]);
+      }
+      continue;
+    }
+
+    // 代码块内不解析 markdown，直接输出纯文本
+    if (inCodeBlock) {
+      if (line.length > 0) {
+        content.push([{ tag: "text", text: line }]);
+      }
+      continue;
+    }
+
     const paragraph = [];
     let remaining = line;
 
@@ -4138,7 +4160,7 @@ function markdownToPost(text) {
 
     // 解析行内格式 (粗体、斜体、链接、行内代码)
     let pos = 0;
-    const regex = /(\*\*([^*]+)\*\*|__([^_]+)__|(?<![*\w])\*([^*\s][^*]*)\*(?![*\w])|(?<![\w])_([^_\s][^_]*)_(?![\w])|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)|<at user_id="([^"]+)">([^<]*)<\/at>)/g;
+    const regex = /(\*\*([^*]+)\*\*|__([^_]+)__|(?<![*\w])\*([^*\s][^*]*)\*(?![*\w])|(?<![\w])_([^_\s][^_]*)_(?![\w])|`([^`]+)`|!?\[([^\]]+)\]\(([^)]+)\)|<at user_id="([^"]+)">([^<]*)<\/at>)/g;
     let match;
 
     while ((match = regex.exec(remaining)) !== null) {
@@ -4157,8 +4179,20 @@ function markdownToPost(text) {
         // `code` - 用特殊格式显示
         paragraph.push({ tag: "text", text: match[6] });
       } else if (match[7] && match[8]) {
-        // [text](url)
-        paragraph.push({ tag: "a", text: match[7], href: match[8] });
+        // [text](url) 或 ![text](url)
+        const isImage = match[0].startsWith('!');
+        const href = match[8].trim();
+        const isValidUrl = /^https?:\/\//.test(href) || /^mailto:/.test(href);
+        if (isImage) {
+          // 图片语法 → 纯文本 (飞书 post 不支持图片 href)
+          paragraph.push({ tag: "text", text: `[图片: ${match[7]}]` });
+        } else if (isValidUrl) {
+          // 合法 URL → 超链接
+          paragraph.push({ tag: "a", text: match[7], href });
+        } else {
+          // 非法 href (相对路径等) → 纯文本
+          paragraph.push({ tag: "text", text: match[7] });
+        }
       } else if (match[9]) {
         // <at user_id="xxx">name</at>
         paragraph.push({ tag: "at", user_id: match[9] });
@@ -4280,6 +4314,20 @@ async function sendCardFeishu(params) {
     throw new Error(`Feishu send card failed: ${String(err)}`);
   }
 }
+function sanitizeMarkdownHrefs(text) {
+  // 飞书 card markdown 要求 href 必须是合法 URL，否则返回 230001 invalid href
+  // 1. 图片语法: ![alt](non-url) → [图片: alt]
+  text = text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, url) => {
+    if (/^https?:\/\//.test(url.trim())) return match; // 合法 URL 保留
+    return alt ? `[图片: ${alt}]` : '[图片]';
+  });
+  // 2. 链接语法: [text](non-url) → text
+  text = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, linkText, url) => {
+    if (/^https?:\/\//.test(url.trim()) || /^mailto:/.test(url.trim())) return match;
+    return linkText;
+  });
+  return text;
+}
 function buildMarkdownCard(text) {
   return {
     config: {
@@ -4288,7 +4336,7 @@ function buildMarkdownCard(text) {
     elements: [
       {
         tag: "markdown",
-        content: text
+        content: sanitizeMarkdownHrefs(text)
       }
     ]
   };
